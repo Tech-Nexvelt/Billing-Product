@@ -1,4 +1,4 @@
-export type TableStatus = 'available' | 'occupied' | 'reserved' | 'cleaning' | 'disabled';
+export type TableStatus = 'available' | 'occupied' | 'reserved' | 'cleaning' | 'out_of_service' | 'closed';
 export type TableType = 'dining' | 'vip' | 'outdoor' | 'family' | 'private';
 export type TableShape = 'square' | 'rectangle' | 'circle';
 

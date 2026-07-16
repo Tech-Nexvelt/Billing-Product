@@ -113,7 +113,7 @@ export function TablesPage() {
   };
 
   const handleTableClick = (table: Table) => {
-    if (table.status === 'disabled') return;
+    if (table.status === 'closed') return;
 
     // A balance means this table already has a bill. Open it in resume mode so
     // the order screen restores the saved items rather than showing a new cart.
@@ -199,7 +199,7 @@ export function TablesPage() {
         return 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200';
       case 'cleaning':
         return 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200';
-      case 'disabled':
+      case 'closed':
         return 'bg-zinc-200 border-zinc-300 text-zinc-500 cursor-not-allowed opacity-60';
       default: // available
         return 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200';

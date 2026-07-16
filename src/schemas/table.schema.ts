@@ -6,7 +6,7 @@ export const tableSchema = z.object({
   floorId: z.string().uuid('Invalid Floor selected'),
   tableType: z.enum(['dining', 'vip', 'outdoor', 'family', 'private']).default('dining'),
   tableShape: z.enum(['square', 'rectangle', 'circle']).default('square'),
-  status: z.enum(['available', 'occupied', 'reserved', 'cleaning', 'disabled']).default('available'),
+  status: z.enum(['available', 'occupied', 'reserved', 'cleaning', 'out_of_service', 'closed']).default('available'),
   positionX: z.number().optional().nullable(),
   positionY: z.number().optional().nullable(),
   displayOrder: z.number().int().default(0),
