@@ -76,6 +76,7 @@ export function OrderPage() {
 
   // Selected table ID from URL query params
   const queryTableId = searchParams.get('table');
+  const shouldResumeBill = searchParams.get('resumeBill') === 'true';
 
   const { items: menuItems, categories, setCategories, setItems: setMenuItems } = useMenuStore();
   const { tables, setTables } = useTableStore();
@@ -162,11 +163,16 @@ export function OrderPage() {
 
     async function checkActiveOrder() {
       try {
+        const orderStatuses = shouldResumeBill
+          ? ['draft', 'pending', 'preparing', 'completed']
+          : ['draft', 'pending', 'preparing'];
+
         const { data: activeOrders, error } = await supabase
           .from('orders')
           .select('*, order_items(*)')
+          .eq('restaurant_id', user!.restaurant_id)
           .eq('table_id', selectedTableId)
-          .in('status', ['draft', 'pending', 'preparing'])
+          .in('status', orderStatuses)
           .order('created_at', { ascending: false })
           .limit(1);
 
@@ -191,8 +197,8 @@ export function OrderPage() {
           setHasUnsavedChanges(false);
           
           toast({
-            title: 'Resumed Order',
-            description: `Loaded existing order details for Table ${tables.find(t => t.id === selectedTableId)?.table_number || ''}`,
+            title: shouldResumeBill ? 'Resumed Bill' : 'Resumed Order',
+            description: `Loaded saved cart details for Table ${tables.find(t => t.id === selectedTableId)?.table_number || ''}`,
           });
         } else {
           // If no active order, clear cart and activeOrderId
@@ -207,7 +213,7 @@ export function OrderPage() {
     }
 
     checkActiveOrder();
-  }, [selectedTableId, user?.restaurant_id]);
+  }, [selectedTableId, shouldResumeBill, tables, user?.restaurant_id]);
 
   const loadOrderScreenData = async () => {
     setIsLoading(true);
@@ -372,7 +378,7 @@ export function OrderPage() {
   };
 
   // Helper function to print Bills (Customer + Restaurant copies)
-  const handlePrintBill = async (orderId: string, paymentMethod: string) => {
+  const handlePrintBill = async (orderId: string, paymentMethod: string, printWindow?: Window | null) => {
     try {
       const activeTable = tables.find((t) => t.id === selectedTableId);
       if (!activeTable) return;
@@ -437,6 +443,7 @@ export function OrderPage() {
       };
 
       if (billingPrinter) {
+        printWindow?.close();
         if (billingPrinter.connection_type === 'browser') {
           printerService.printBill(billData, billingPrinter.paper_size, 'customer');
           printerService.printBill(billData, billingPrinter.paper_size, 'restaurant');
@@ -481,7 +488,7 @@ export function OrderPage() {
           discountAmount: 0,
           grandTotal,
           paymentMethod,
-        }, { kot: false, bill: true });
+        }, { kot: false, bill: true }, printWindow);
       }
     } catch (err: any) {
       console.error('Bill printing failed:', err);
@@ -565,8 +572,17 @@ export function OrderPage() {
     }
   };
 
-  const handlePaymentComplete = async (paymentMethod: string, _paidAmount: number, _isPartial: boolean, _splitDetails?: any) => {
-    if (!activeOrderId || !selectedTableId) return;
+  const handlePaymentComplete = async (
+    paymentMethod: string,
+    _paidAmount: number,
+    _isPartial: boolean,
+    _splitDetails?: any,
+    printWindow?: Window | null,
+  ) => {
+    if (!activeOrderId || !selectedTableId) {
+      printWindow?.close();
+      return;
+    }
 
     try {
       // 1. Mark order completed
@@ -575,7 +591,7 @@ export function OrderPage() {
       if (res.error) throw new Error(res.error.message);
 
       // 2. Trigger Print Receipt Copies (Customer + Restaurant copies only)
-      await handlePrintBill(activeOrderId, paymentMethod);
+      await handlePrintBill(activeOrderId, paymentMethod, printWindow);
 
       toast({ title: 'Payment Completed', description: 'Bill printed successfully.' });
       setIsCheckoutOpen(false);
@@ -583,6 +599,7 @@ export function OrderPage() {
       // 4. Return immediately to tables home screen
       navigate('/');
     } catch (err: any) {
+      printWindow?.close();
       toast({ title: 'Failed to complete order', description: err.message, variant: 'destructive' });
     }
   };

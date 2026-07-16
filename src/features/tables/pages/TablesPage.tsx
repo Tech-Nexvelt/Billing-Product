@@ -114,12 +114,17 @@ export function TablesPage() {
 
   const handleTableClick = (table: Table) => {
     if (table.status === 'disabled') return;
-    
-    if (table.status === 'occupied') {
-      navigate(`/orders?table=${table.id}`);
-    } else {
-      navigate(`/orders?new=true&table=${table.id}`);
+
+    // A balance means this table already has a bill. Open it in resume mode so
+    // the order screen restores the saved items rather than showing a new cart.
+    if (table.current_bill > 0) {
+      navigate(`/orders?table=${table.id}&resumeBill=true`);
+      return;
     }
+
+    navigate(table.status === 'occupied'
+      ? `/orders?table=${table.id}`
+      : `/orders?new=true&table=${table.id}`);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

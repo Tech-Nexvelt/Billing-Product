@@ -23,7 +23,11 @@ interface ReceiptData {
   paymentMethod: string;
 }
 
-export function printReceipts(data: ReceiptData, options: { kot?: boolean; bill?: boolean } = { kot: true, bill: true }) {
+export function printReceipts(
+  data: ReceiptData,
+  options: { kot?: boolean; bill?: boolean } = { kot: true, bill: true },
+  printWindow?: Window | null,
+) {
   // Create a temporary print frame or styling
   const style = `
     @media print {
@@ -222,9 +226,9 @@ export function printReceipts(data: ReceiptData, options: { kot?: boolean; bill?
   }
 
   // Write content to print window
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.write(`
+  const targetWindow = printWindow || window.open('', '_blank');
+  if (targetWindow) {
+    targetWindow.document.write(`
       <html>
         <head>
           <title>Print Receipt - ${data.orderNumber}</title>
@@ -241,6 +245,6 @@ export function printReceipts(data: ReceiptData, options: { kot?: boolean; bill?
         </body>
       </html>
     `);
-    printWindow.document.close();
+    targetWindow.document.close();
   }
 }
