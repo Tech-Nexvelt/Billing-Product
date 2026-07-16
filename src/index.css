@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 168 89% 36%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 167 92% 25%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 180 100% 50%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 168 89% 36%;
+    --radius: 0.625rem;
+    --font-sans: 'Inter', system-ui, sans-serif;
+
+    /* NexVelt Brand */
+    --color-primary: #0AB190;
+    --color-secondary: #057B62;
+    --color-accent: #00FEFD;
+    --color-background: #F8FAFC;
+    --color-surface: #FFFFFF;
+    --color-text-primary: #111827;
+    --color-text-secondary: #6B7280;
+    --color-border: #E5E7EB;
+
+    /* Status Colors */
+    --color-available: #22C55E;
+    --color-occupied: #EF4444;
+    --color-reserved: #F59E0B;
+    --color-cleaning: #3B82F6;
+    --color-disabled: #9CA3AF;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 168 89% 36%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 167 92% 25%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 180 100% 50%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 168 89% 36%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border box-border;
+  }
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2;
+  }
+}
+
+@layer utilities {
+  .table-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  }
+  @media (min-width: 640px) {
+    .table-grid { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+  }
+  @media (min-width: 1024px) {
+    .table-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .glass {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  .dark .glass {
+    background: rgba(17, 24, 39, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
