@@ -13,8 +13,12 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Plus, Edit2, Trash2, Armchair, Loader2, Clock, RefreshCw, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTopbarContent } from '@/components/shared/TopbarContext';
-import { Table, TableType, TableShape } from '@/types/table.types';
+import { Table, TableType, TableShape, TableStatus } from '@/types/table.types';
 import { supabase } from '@/lib/supabase';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { tableStatusValidationService } from '@/services/tableStatusValidation.service';
+import { TableStatusValidationDialog } from '@/components/shared/TableStatusValidationDialog';
 
 export function TablesPage() {
   const { user } = useAuthStore();
@@ -41,6 +45,15 @@ export function TablesPage() {
   const [floorId, setFloorId] = useState('');
 
   const [activeOrders, setActiveOrders] = useState<any[]>([]);
+
+  const [isValidationOpen, setIsValidationOpen] = useState(false);
+  const [validationParams, setValidationParams] = useState<{
+    tableId: string;
+    newStatus: string;
+    reason?: string;
+    errorMessage?: string;
+    suggestedAction?: 'checkout' | 'kitchen' | 'resume' | 'cancel' | 'none';
+  }>({ tableId: '', newStatus: '' });
 
   useEffect(() => {
     if (!user?.restaurant_id) return;
@@ -322,6 +335,7 @@ export function TablesPage() {
         <div className="table-grid grid gap-3 sm:gap-4 lg:gap-6">
           {filteredTables.map((table) => {
             const activeOrder = activeOrders.find((o) => o.table_id === table.id);
+            const isHold = activeOrder && activeOrder.status === 'hold';
             const isOccupied = table.status === 'occupied';
             const isAvailable = table.status === 'available';
 
@@ -334,19 +348,69 @@ export function TablesPage() {
                 )}`}
               >
                 {/* Table Header */}
-                <div className="flex justify-between items-start">
-                  <span className="text-xl font-extrabold tracking-tight">
-                    {table.table_number.startsWith('T') || table.table_number.startsWith('Table') ? table.table_number : `Table ${table.table_number}`}
-                  </span>
+                <div className="flex justify-between items-center w-full gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-base font-extrabold tracking-tight truncate">
+                      {table.table_number.startsWith('T') || table.table_number.startsWith('Table') ? table.table_number : `Table ${table.table_number}`}
+                    </span>
+                    {isHold && (
+                      <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white font-black text-[9px] px-1 py-0.5 animate-pulse shrink-0 border-none">
+                        HOLD
+                      </Badge>
+                    )}
+                  </div>
                   
+                  {/* Quick status dropdown */}
+                  <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                    <Select
+                      value={table.status}
+                      onValueChange={async (newStatus) => {
+                        try {
+                          const validation = await tableStatusValidationService.validateStatusChange(table.id, newStatus, user!.restaurant_id, user!);
+                          if (!validation.allowed) {
+                            setValidationParams({
+                              tableId: table.id,
+                              newStatus,
+                              reason: validation.reason,
+                              errorMessage: validation.errorMessage,
+                              suggestedAction: validation.suggestedAction,
+                            });
+                            setIsValidationOpen(true);
+                            return;
+                          }
+
+                          const res = await tableService.updateTableStatusValidated(table.id, newStatus as TableStatus, user!);
+                          if (!res.success) throw new Error(res.message);
+                          if (res.data) {
+                            updateTable(res.data);
+                            toast({ title: 'Table Status Updated', description: `Table ${table.table_number} status is now ${newStatus}.` });
+                          }
+                        } catch (err: any) {
+                          toast({ title: 'Failed to update table status', description: err.message, variant: 'destructive' });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-6 w-20 text-[9px] font-black uppercase tracking-wider bg-white/70 hover:bg-white border border-border focus:ring-0">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">Available</SelectItem>
+                        <SelectItem value="occupied">Occupied</SelectItem>
+                        <SelectItem value="cleaning">Cleaning</SelectItem>
+                        <SelectItem value="reserved">Reserved</SelectItem>
+                        <SelectItem value="out_of_service">Out of Service</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   {/* Action Buttons (Hidden for Cashier) */}
                   {!isCashier && (
-                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3 bg-white/90 backdrop-blur rounded-lg p-1 border border-border">
-                      <Button variant="ghost" size="icon" className="w-6 h-6" onClick={(e) => handleOpenEdit(table, e)}>
-                        <Edit2 className="w-3.5 h-3.5" />
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-2 right-2 bg-white/90 backdrop-blur rounded-lg p-1 border border-border z-10" onClick={(e) => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" className="w-5 h-5" onClick={(e) => handleOpenEdit(table, e)}>
+                        <Edit2 className="w-3 h-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="w-6 h-6 text-destructive hover:text-destructive" onClick={(e) => handleOpenDelete(table, e)}>
-                        <Trash2 className="w-3.5 h-3.5" />
+                      <Button variant="ghost" size="icon" className="w-5 h-5 text-destructive hover:text-destructive" onClick={(e) => handleOpenDelete(table, e)}>
+                        <Trash2 className="w-3 h-3" />
                       </Button>
                     </div>
                   )}
@@ -355,7 +419,7 @@ export function TablesPage() {
                 {isAvailable ? (
                   /* Available layout */
                   <div className="flex-1 flex flex-col items-center justify-center">
-                    <span className="text-sm font-bold uppercase tracking-wider text-slate-500">Available</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Available</span>
                   </div>
                 ) : (
                   /* Occupied/Reserved/Cleaning/Disabled layout */
@@ -391,7 +455,6 @@ export function TablesPage() {
           })}
         </div>
       )}
-
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
@@ -497,6 +560,24 @@ export function TablesPage() {
         variant="destructive"
         isLoading={isSubmitting}
         onConfirm={handleDelete}
+      />
+      {/* Table Status Validation dialog */}
+      <TableStatusValidationDialog
+        isOpen={isValidationOpen}
+        onOpenChange={setIsValidationOpen}
+        reason={validationParams.reason}
+        errorMessage={validationParams.errorMessage}
+        suggestedAction={validationParams.suggestedAction}
+        onActionTriggered={() => {
+          const { tableId, suggestedAction } = validationParams;
+          if (suggestedAction === 'checkout') {
+            navigate(`/orders?table=${tableId}&resumeBill=true&checkout=true`);
+          } else if (suggestedAction === 'resume') {
+            navigate(`/orders?table=${tableId}&resumeBill=true`);
+          } else if (suggestedAction === 'kitchen') {
+            navigate(`/kds`);
+          }
+        }}
       />
     </div>
   );

@@ -16,13 +16,15 @@ import { useToast } from '@/hooks/use-toast';
 
 const COLUMNS: { status: KdsStatus; label: string; color: string; headerColor: string }[] = [
   { status: 'pending', label: 'Pending', color: 'bg-yellow-50/50 border-yellow-100', headerColor: 'bg-yellow-400 text-yellow-900' },
+  { status: 'accepted', label: 'Accepted', color: 'bg-orange-50/50 border-orange-100', headerColor: 'bg-orange-500 text-white' },
   { status: 'preparing', label: 'Preparing', color: 'bg-blue-50/50 border-blue-100', headerColor: 'bg-blue-500 text-white' },
   { status: 'ready', label: 'Ready', color: 'bg-green-50/50 border-green-100', headerColor: 'bg-[#0AB190] text-white' },
   { status: 'served', label: 'Served', color: 'bg-gray-50/50 border-gray-100', headerColor: 'bg-gray-500 text-white' },
 ];
 
 const STATUS_TRANSITIONS: Record<KdsStatus, KdsStatus | null> = {
-  pending: 'preparing',
+  pending: 'accepted',
+  accepted: 'preparing',
   preparing: 'ready',
   ready: 'served',
   served: null,
@@ -163,7 +165,34 @@ export function KdsPage() {
     load();
   }, [load]);
 
-  // Auto-refresh every 30 seconds
+  // Realtime subscription for orders updates
+  useEffect(() => {
+    if (!restaurant) return;
+
+    const channel = supabase
+      .channel(`kds_realtime_${restaurant.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => {
+          load();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_items', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => {
+          load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [restaurant, load]);
+
+  // Auto-refresh fallback every 30 seconds
   useEffect(() => {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
@@ -206,7 +235,7 @@ export function KdsPage() {
         Last updated: {lastRefresh.toLocaleTimeString()} • {activeOrders.length} active orders
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {COLUMNS.map((col) => {
           const colOrders = activeOrders.filter((o) => o.status === col.status);
           return (

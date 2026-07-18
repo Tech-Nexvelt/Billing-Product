@@ -76,6 +76,90 @@ export class TableService extends BaseService {
     return result;
   }
 
+  async updateTableStatusValidated(
+    tableId: string,
+    newStatus: TableStatus,
+    user: { id: string; restaurant_id: string; full_name?: string | null }
+  ): Promise<ApiResponse<Table>> {
+    try {
+      const { data: table, error: tableError } = await supabase
+        .from('tables')
+        .select('*')
+        .eq('id', tableId)
+        .single();
+      if (tableError || !table) throw new Error('Table not found.');
+
+      const previousStatus = table.status;
+
+      const { data: activeOrders, error: orderError } = await supabase
+        .from('orders')
+        .select(`
+          id,
+          status,
+          grand_total,
+          order_items (
+            id
+          ),
+          payments (
+            amount
+          )
+        `)
+        .eq('table_id', tableId)
+        .in('status', ['draft', 'pending', 'preparing', 'ready', 'hold']);
+
+      if (orderError) throw orderError;
+      
+      const activeOrder = activeOrders && activeOrders.length > 0 ? activeOrders[0] : null;
+      const orderItemCount = activeOrder ? ((activeOrder as any).order_items?.length || 0) : 0;
+      const grandTotal = activeOrder ? Number(activeOrder.grand_total) || 0 : 0;
+      const paidAmount = activeOrder ? ((activeOrder as any).payments || []).reduce((sum: number, p: any) => sum + Number(p.amount), 0) : 0;
+      const outstandingBalance = activeOrder ? Math.max(0, grandTotal - paidAmount) : 0;
+      const paymentStatus = activeOrder && outstandingBalance > 0 ? 'Unpaid' : 'Paid';
+
+      const hasUnpaidBill = activeOrder && orderItemCount > 0 && outstandingBalance > 0 && paymentStatus !== 'Paid';
+      const hasActiveKitchenOrder = activeOrder && ['pending', 'preparing'].includes(activeOrder.status);
+
+      if (newStatus === 'available' && hasUnpaidBill) {
+        throw new Error('Cannot mark table as Available when an unpaid bill exists.');
+      }
+      if (newStatus === 'reserved' && previousStatus === 'occupied') {
+        throw new Error('Cannot mark table as Reserved while it is Occupied.');
+      }
+      if (newStatus === 'cleaning' && hasActiveKitchenOrder) {
+        throw new Error('Cannot mark table as Cleaning while kitchen orders are still active.');
+      }
+      if (newStatus === 'out_of_service' && previousStatus === 'occupied') {
+        throw new Error('Cannot mark table as Out of Service while it is Occupied.');
+      }
+
+      const result = await this.handleCall<Table>(
+        supabase.from('tables').update({ status: newStatus })
+          .eq('id', tableId)
+          .select()
+          .single()
+      );
+
+      if (result.data) {
+        await supabase.from('activity_logs').insert({
+          restaurant_id: user.restaurant_id,
+          user_id: user.id,
+          action: 'table_status_changed',
+          entity_type: 'table',
+          entity_id: tableId,
+          metadata: {
+            previous_status: previousStatus,
+            new_status: newStatus,
+            user_name: user.full_name || 'Cashier'
+          }
+        });
+      }
+      return result;
+    } catch (err: any) {
+      return this.createClientError(err.message || 'Failed to update table status');
+    }
+  }
+
+
   async deleteTable(id: string, userId: string): Promise<ApiResponse<void>> {
     return this.handleCall(
       supabase

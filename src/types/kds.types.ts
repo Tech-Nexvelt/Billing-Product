@@ -1,6 +1,6 @@
 import type { OrderItem } from './order.types';
 
-export type KdsStatus = 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled';
+export type KdsStatus = 'pending' | 'accepted' | 'preparing' | 'ready' | 'served' | 'cancelled';
 export type KdsPriority = 'normal' | 'rush' | 'vip';
 
 export interface KdsOrder {

@@ -1,0 +1,2 @@
+import { app } from 'electron'; import fs from 'node:fs/promises'; import path from 'node:path'; import { SyncService } from '../services/sync.service.js';
+export class HealthService { constructor(private readonly sync: SyncService) {} async check() { const db = path.join(app.getPath('userData'), 'nexvelt-pos.db'); const stat = await fs.stat(db).catch(() => null); const online = await this.sync.isOnline(); return { status: stat && online ? 'healthy' : 'warning', online, databaseBytes: stat?.size ?? 0, memory: process.memoryUsage(), checkedAt: new Date().toISOString() }; } }

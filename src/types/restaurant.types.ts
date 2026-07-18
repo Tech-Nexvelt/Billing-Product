@@ -31,6 +31,7 @@ export interface RestaurantSettings {
   date_format: string;
   time_format: string;
   language: string;
+  auto_available_after_payment?: boolean;
   version: number;
   created_at: string;
   updated_at: string;

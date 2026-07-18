@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Banknote, QrCode, CreditCard, Wallet } from 'lucide-react';
+import { Banknote, QrCode, CreditCard, Wallet, Gift } from 'lucide-react';
 import { formatCurrency } from '@/utils/format';
 
 interface CheckoutDialogProps {
@@ -17,7 +17,7 @@ interface CheckoutDialogProps {
 
 export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintPreview }: CheckoutDialogProps) {
   const [activeTab, setActiveTab] = useState<'single' | 'split'>('single');
-  const [singleMethod, setSingleMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Wallet'>('Cash');
+  const [singleMethod, setSingleMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Wallet' | 'Gift Card'>('Cash');
   
   // Single payment details
   const [singleAmountPaid, setSingleAmountPaid] = useState(total);
@@ -28,6 +28,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
   const [splitUpi, setSplitUpi] = useState<number>(0);
   const [splitCard, setSplitCard] = useState<number>(0);
   const [splitWallet, setSplitWallet] = useState<number>(0);
+  const [splitGift, setSplitGift] = useState<number>(0);
 
   useEffect(() => {
     if (open) {
@@ -37,47 +38,46 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
       setSplitUpi(0);
       setSplitCard(0);
       setSplitWallet(0);
+      setSplitGift(0);
     }
   }, [open, total]);
 
-  const splitTotal = Number(splitCash) + Number(splitUpi) + Number(splitCard) + Number(splitWallet);
+  const splitTotal = Number(splitCash) + Number(splitUpi) + Number(splitCard) + Number(splitWallet) + Number(splitGift);
   const splitRemaining = total - splitTotal;
 
   const handleSinglePayment = () => {
     const isPartial = isPartialPayment && singleAmountPaid < total;
-    // Open this directly from the customer's payment click. Browsers otherwise
-    // block a print window opened after the payment request completes.
     const printWindow = window.open('', '_blank');
     onComplete(singleMethod, singleAmountPaid, isPartial, null, printWindow);
   };
 
   const handleSplitPayment = () => {
-    // Collect split details
     const splitDetails = {
       Cash: Number(splitCash),
       UPI: Number(splitUpi),
       Card: Number(splitCard),
       Wallet: Number(splitWallet),
+      'Gift Card': Number(splitGift),
     };
     
-    // We determine payment method string based on where money was paid
     const methodsPaid = Object.entries(splitDetails)
       .filter(([_, amt]) => amt > 0)
       .map(([m]) => m);
 
     const methodLabel = methodsPaid.join(' + ') || 'Split';
-    const isPartial = splitRemaining > 0.01; // remaining amount due
+    const isPartial = splitRemaining > 0.01;
 
     const printWindow = window.open('', '_blank');
     onComplete(methodLabel, splitTotal, isPartial, splitDetails, printWindow);
   };
 
-  const setSplitMax = (method: 'Cash' | 'UPI' | 'Card' | 'Wallet') => {
+  const setSplitMax = (method: 'Cash' | 'UPI' | 'Card' | 'Wallet' | 'Gift Card') => {
     const remaining = total - (
       (method === 'Cash' ? 0 : Number(splitCash)) +
       (method === 'UPI' ? 0 : Number(splitUpi)) +
       (method === 'Card' ? 0 : Number(splitCard)) +
-      (method === 'Wallet' ? 0 : Number(splitWallet))
+      (method === 'Wallet' ? 0 : Number(splitWallet)) +
+      (method === 'Gift Card' ? 0 : Number(splitGift))
     );
     
     const cleanRemaining = Math.max(0, Number(remaining.toFixed(2)));
@@ -86,6 +86,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
     if (method === 'UPI') setSplitUpi(cleanRemaining);
     if (method === 'Card') setSplitCard(cleanRemaining);
     if (method === 'Wallet') setSplitWallet(cleanRemaining);
+    if (method === 'Gift Card') setSplitGift(cleanRemaining);
   };
 
   return (
@@ -124,7 +125,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                 <button
                   type="button"
                   onClick={() => setSingleMethod('Cash')}
-                  className={`flex flex-col items-center gap-2 p-4 border rounded-xl font-semibold transition-all duration-200 ${
+                  className={`flex flex-col items-center gap-2 p-3 border rounded-xl font-semibold transition-all duration-200 ${
                     singleMethod === 'Cash'
                       ? 'border-primary bg-primary/10 text-primary shadow-sm'
                       : 'border-border hover:bg-slate-50 text-slate-700'
@@ -136,7 +137,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                 <button
                   type="button"
                   onClick={() => setSingleMethod('UPI')}
-                  className={`flex flex-col items-center gap-2 p-4 border rounded-xl font-semibold transition-all duration-200 ${
+                  className={`flex flex-col items-center gap-2 p-3 border rounded-xl font-semibold transition-all duration-200 ${
                     singleMethod === 'UPI'
                       ? 'border-primary bg-primary/10 text-primary shadow-sm'
                       : 'border-border hover:bg-slate-50 text-slate-700'
@@ -148,7 +149,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                 <button
                   type="button"
                   onClick={() => setSingleMethod('Card')}
-                  className={`flex flex-col items-center gap-2 p-4 border rounded-xl font-semibold transition-all duration-200 ${
+                  className={`flex flex-col items-center gap-2 p-3 border rounded-xl font-semibold transition-all duration-200 ${
                     singleMethod === 'Card'
                       ? 'border-primary bg-primary/10 text-primary shadow-sm'
                       : 'border-border hover:bg-slate-50 text-slate-700'
@@ -160,7 +161,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                 <button
                   type="button"
                   onClick={() => setSingleMethod('Wallet')}
-                  className={`flex flex-col items-center gap-2 p-4 border rounded-xl font-semibold transition-all duration-200 ${
+                  className={`flex flex-col items-center gap-2 p-3 border rounded-xl font-semibold transition-all duration-200 ${
                     singleMethod === 'Wallet'
                       ? 'border-primary bg-primary/10 text-primary shadow-sm'
                       : 'border-border hover:bg-slate-50 text-slate-700'
@@ -168,6 +169,18 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                 >
                   <Wallet className="w-6 h-6" />
                   <span>Digital Wallet</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSingleMethod('Gift Card')}
+                  className={`flex flex-col items-center gap-2 p-3 border rounded-xl font-semibold transition-all duration-200 col-span-2 ${
+                    singleMethod === 'Gift Card'
+                      ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                      : 'border-border hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <Gift className="w-6 h-6" />
+                  <span>Gift Card</span>
                 </button>
               </div>
 
@@ -307,6 +320,32 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
                       <button
                         type="button"
                         onClick={() => setSplitMax('Wallet')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold uppercase bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
+                      >
+                        Max
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Gift Card Split Row */}
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+                      <Gift className="w-3.5 h-3.5 text-slate-500" /> Gift Card Amount
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={splitGift || ''}
+                        onChange={(e) => setSplitGift(Number(e.target.value))}
+                        className="font-bold pr-14"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSplitMax('Gift Card')}
                         className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold uppercase bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
                       >
                         Max

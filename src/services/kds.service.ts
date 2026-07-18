@@ -15,7 +15,7 @@ export class KdsService extends BaseService {
         order_items(*)
       `)
       .eq('restaurant_id', restaurantId)
-      .in('status', ['pending', 'preparing', 'ready', 'served'])
+      .in('status', ['pending', 'accepted', 'preparing', 'ready', 'served'])
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
 
@@ -51,15 +51,37 @@ export class KdsService extends BaseService {
     status: KdsStatus,
     currentVersion: number
   ): Promise<ApiResponse<KdsOrder>> {
-    return this.handleCall(
+    const updateBody: Record<string, any> = { status, version: currentVersion + 1 };
+    
+    if (status === 'accepted') updateBody.accepted_at = new Date().toISOString();
+    else if (status === 'preparing') updateBody.preparing_at = new Date().toISOString();
+    else if (status === 'ready') updateBody.ready_at = new Date().toISOString();
+    else if (status === 'served') updateBody.served_at = new Date().toISOString();
+
+    const result = await this.handleCall<any>(
       supabase
         .from('orders')
-        .update({ status, version: currentVersion + 1 })
+        .update(updateBody)
         .eq('id', orderId)
         .eq('version', currentVersion)
         .select()
         .single()
     );
+
+    if (result.data) {
+      await supabase.from('activity_logs').insert({
+        restaurant_id: result.data.restaurant_id,
+        action: `kds_${status}`,
+        entity_type: 'order',
+        entity_id: orderId,
+        metadata: {
+          status,
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+
+    return result;
   }
 
   async assignChef(

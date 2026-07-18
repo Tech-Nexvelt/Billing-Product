@@ -1,0 +1,3 @@
+import fs from 'node:fs/promises'; import path from 'node:path'; import { app } from 'electron';
+export type PluginManifest = { id: string; name: string; version: string; permissions: string[] };
+export class PluginService { async list(): Promise<PluginManifest[]> { const root = path.join(app.getPath('userData'), 'plugins'); const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []); return Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => JSON.parse(await fs.readFile(path.join(root, entry.name, 'manifest.json'), 'utf8')) as PluginManifest)); } }

@@ -1,0 +1,3 @@
+import Store from 'electron-store'; import { PrinterRole } from '../interfaces/printer.interface.js';
+type Hardware = { deviceName: string; enabled: boolean; priority: number; health: 'healthy' | 'warning' | 'offline' };
+export class HardwareService { private store = new Store<{ printers: Partial<Record<PrinterRole, Hardware[]>> }>({ defaults: { printers: {} } }); route(role: PrinterRole) { return (this.store.get('printers')[role] ?? []).filter((item) => item.enabled).sort((a,b) => a.priority - b.priority); } configure(role: PrinterRole, devices: Hardware[]) { this.store.set(`printers.${role}`, devices); } }

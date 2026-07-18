@@ -1,0 +1,12 @@
+import { app } from 'electron';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+export class DiagnosticsService {
+    db;
+    constructor(db) {
+        this.db = db;
+    }
+    async report() { const dbFile = path.join(app.getPath('userData'), 'nexvelt-pos.db'); const stat = await fs.stat(dbFile).catch(() => null); return { application: { version: app.getVersion(), electron: process.versions.electron, uptime: process.uptime() }, system: { os: `${os.platform()} ${os.release()}`, cpu: os.cpus()[0]?.model, memory: os.totalmem(), freeMemory: os.freemem() }, databaseBytes: stat?.size ?? 0, queue: this.db.queueStats(), createdAt: new Date().toISOString() }; }
+    async supportBundle() { const file = path.join(app.getPath('userData'), `support-${Date.now()}.json`); await fs.writeFile(file, JSON.stringify(await this.report(), null, 2)); return file; }
+}

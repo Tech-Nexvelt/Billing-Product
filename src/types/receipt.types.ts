@@ -51,6 +51,8 @@ export interface BillReceiptData {
   payments: BillPayment[];
   footer_message: string;
   currency_symbol: string;
+  internal_notes?: string | null;
+  is_reprint?: boolean;
 }
 
 export interface BillItem {

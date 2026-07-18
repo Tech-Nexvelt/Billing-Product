@@ -3,10 +3,10 @@ import { useTableStore } from '@/stores/table.store';
 import { useFloorStore } from '@/stores/floor.store';
 import { useOrderStore } from '@/stores/order.store';
 import { useMenuStore } from '@/stores/menu.store';
+import { orderService } from '@/services/order.service';
 
 import type { Table } from '@/types/table.types';
 import type { Floor } from '@/types/floor.types';
-import type { OrderWithItems } from '@/types/order.types';
 import type { MenuItemWithTags } from '@/types/menu.types';
 
 
@@ -36,9 +36,16 @@ export function useRealtime() {
           break;
 
         case 'orders':
-          if (eventType === 'INSERT') addOrder({ ...newRecord, items: [] } as OrderWithItems);
-          else if (eventType === 'UPDATE') updateOrder(newRecord as OrderWithItems);
-          else if (eventType === 'DELETE') removeOrder(oldRecord.id);
+          if (eventType === 'INSERT' || eventType === 'UPDATE') {
+            orderService.getOrderById(newRecord.id).then((res) => {
+              if (res.success && res.data) {
+                if (eventType === 'INSERT') addOrder(res.data);
+                else updateOrder(res.data);
+              }
+            });
+          } else if (eventType === 'DELETE') {
+            removeOrder(oldRecord.id);
+          }
           break;
 
         case 'menu_items':

@@ -1,4 +1,6 @@
 import { CartItem } from '@/types/order.types';
+import { printQueueService } from '@/services/printer.service';
+import { supabase } from '@/lib/supabase';
 
 interface ReceiptData {
   restaurantName: string;
@@ -21,11 +23,13 @@ interface ReceiptData {
   discountAmount: number;
   grandTotal: number;
   paymentMethod: string;
+  internalNotes?: string | null;
+  isReprint?: boolean;
 }
 
 export function printReceipts(
   data: ReceiptData,
-  options: { kot?: boolean; bill?: boolean } = { kot: true, bill: true },
+  options: { kot?: boolean; bill?: boolean; customer?: boolean; restaurant?: boolean } = { kot: true, bill: true },
   printWindow?: Window | null,
 ) {
   // Create a temporary print frame or styling
@@ -78,6 +82,7 @@ export function printReceipts(
   const kotHtml = `
     <div class="receipt-container page-break">
       <div class="center bold" style="font-size: 16px;">KITCHEN ORDER TICKET (KOT)</div>
+      ${data.isReprint ? '<div class="center bold">** DUPLICATE/REPRINT COPY **</div>' : ''}
       <div class="separator"></div>
       <div><strong>Order Ref:</strong> ${data.orderNumber}</div>
       <div><strong>Table:</strong> ${data.tableNumber}</div>
@@ -107,6 +112,7 @@ export function printReceipts(
         ${data.address ? `<div>${data.address}</div>` : ''}
         ${data.phone ? `<div>Ph: ${data.phone}</div>` : ''}
         ${data.gstNumber ? `<div>GSTIN: ${data.gstNumber}</div>` : ''}
+        ${data.isReprint ? '<div class="bold" style="margin-top: 4px; border: 1px solid #000; padding: 2px;">REPRINT COPY</div>' : ''}
       </div>
       <div class="separator"></div>
       <div><strong>Invoice:</strong> ${data.orderNumber}</div>
@@ -167,6 +173,7 @@ export function printReceipts(
       <div class="center">
         <div class="bold" style="font-size: 14px; border: 1px solid #000; padding: 2px; display: inline-block; margin-bottom: 5px;">INTERNAL COPY (RESTAURANT)</div>
         <div class="bold" style="font-size: 16px;">${data.restaurantName}</div>
+        ${data.isReprint ? '<div class="bold" style="margin-top: 4px; border: 1px solid #000; padding: 2px;">REPRINT COPY</div>' : ''}
       </div>
       <div class="separator"></div>
       <div><strong>Invoice:</strong> ${data.orderNumber}</div>
@@ -212,15 +219,22 @@ export function printReceipts(
         <strong>Paid via ${data.paymentMethod}</strong>
       </div>
       <div class="separator"></div>
+      ${data.internalNotes ? `<div><strong>Internal Notes:</strong> ${data.internalNotes}</div><div class="separator"></div>` : ''}
       <div class="center italic">Internal Audit Copy</div>
     </div>
   `;
 
   const htmlParts = [];
-  if (options.kot ?? true) {
+  const hasSpecificBillTemplate = options.customer !== undefined || options.restaurant !== undefined;
+  
+  if (options.kot ?? (!hasSpecificBillTemplate)) {
     htmlParts.push(kotHtml);
   }
-  if (options.bill ?? true) {
+  
+  if (hasSpecificBillTemplate) {
+    if (options.customer) htmlParts.push(customerHtml);
+    if (options.restaurant) htmlParts.push(restaurantHtml);
+  } else if (options.bill ?? true) {
     htmlParts.push(customerHtml);
     htmlParts.push(restaurantHtml);
   }
@@ -246,5 +260,195 @@ export function printReceipts(
       </html>
     `);
     targetWindow.document.close();
+  }
+}
+
+export interface UnifiedPrintParams {
+  type: 'customer' | 'owner' | 'kot';
+  restaurant: any;
+  table: any;
+  floorName: string;
+  cashierName: string;
+  orderNumber: string;
+  orderId: string;
+  items: any[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  serviceChargeRate: number;
+  serviceChargeAmount: number;
+  discountAmount: number;
+  grandTotal: number;
+  paymentMethod: string;
+  specialInstructions?: string | null;
+  isReprint?: boolean;
+  kotVersion?: number;
+  printWindow?: Window | null;
+  printers?: any[];
+  userId?: string;
+  reprintReason?: string;
+}
+
+export async function unifiedPrintReceipt(params: UnifiedPrintParams) {
+  const startTime = Date.now();
+  let printStatus: 'success' | 'failed' = 'success';
+  let errorMsg: string | null = null;
+
+  try {
+    const {
+      type,
+      restaurant,
+      table,
+      floorName,
+      cashierName,
+      orderNumber,
+      orderId,
+      items,
+      subtotal,
+      taxRate: _taxRate,
+      taxAmount,
+      serviceChargeRate: _serviceChargeRate,
+      serviceChargeAmount: _serviceChargeAmount,
+      discountAmount,
+      grandTotal,
+      paymentMethod,
+      specialInstructions,
+      isReprint = false,
+      kotVersion = 1,
+      printWindow = null,
+      printers = [],
+      userId,
+    } = params;
+
+    // Route to local print queue which checks health, failover, etc.
+    printQueueService.addJob({
+      type,
+      data: {
+        restaurant_name: restaurant?.name || 'NexVelt Restaurant',
+        restaurant_address: restaurant?.address || null,
+        restaurant_phone: restaurant?.phone || null,
+        restaurant_email: restaurant?.email || null,
+        gst_number: restaurant?.gst_number || null,
+        bill_number: orderNumber,
+        invoice_number: orderNumber,
+        order_number: orderNumber,
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString(),
+        cashier_name: cashierName,
+        table_number: table?.table_number || '',
+        floor_name: floorName,
+        items: items.map(i => ({
+          name: i.item_name || i.name,
+          quantity: i.quantity,
+          unit_price: i.unit_price || 0,
+          item_total: i.item_total || 0,
+          special_notes: i.special_notes || i.specialInstructions || null
+        })),
+        subtotal,
+        discount_amount: discountAmount,
+        cgst_amount: taxAmount / 2,
+        sgst_amount: taxAmount / 2,
+        grand_total: grandTotal,
+        payments: [{ method: paymentMethod, amount: grandTotal }],
+        footer_message: isReprint ? 'DUPLICATE COPY' : 'Thank You!',
+        currency_symbol: '₹',
+        internal_notes: specialInstructions || null,
+        is_reprint: isReprint,
+        token_number: kotVersion,
+        kitchen_notes: specialInstructions || null,
+      },
+      options: {
+        orderId,
+        userId,
+        printWindow,
+      },
+      printerId: type === 'kot'
+        ? printers?.find(p => p.is_default_kitchen)?.id
+        : printers?.find(p => p.is_default_billing)?.id
+    });
+
+  } catch (err: any) {
+    printStatus = 'failed';
+    errorMsg = err.message || 'Printing failed';
+    throw err;
+  } finally {
+    const duration = Date.now() - startTime;
+    // Audit log
+    await logReceiptPrint({
+      restaurantId: params.restaurant?.id,
+      orderId: params.orderId,
+      receiptType: params.type,
+      receiptNumber: params.orderNumber,
+      printerName: params.type === 'kot' ? 'Kitchen Printer' : 'Billing Printer',
+      printedBy: params.userId,
+      printDurationMs: duration,
+      printStatus,
+      isReprint: params.isReprint || false,
+      reprintReason: params.reprintReason || null,
+      copies: 1,
+      metadata: errorMsg ? { error: errorMsg } : {},
+    });
+  }
+}
+
+async function logReceiptPrint(audit: {
+  restaurantId: string;
+  orderId: string;
+  receiptType: string;
+  receiptNumber: string;
+  printerName: string;
+  printedBy?: string;
+  printDurationMs: number;
+  printStatus: string;
+  isReprint: boolean;
+  reprintReason?: string | null;
+  copies: number;
+  metadata: any;
+}) {
+  try {
+    // 1. Try writing to receipt_print_history table
+    const { error } = await supabase
+      .from('receipt_print_history')
+      .insert({
+        restaurant_id: audit.restaurantId,
+        order_id: audit.orderId,
+        receipt_type: audit.receiptType,
+        receipt_number: audit.receiptNumber,
+        printer_name: audit.printerName,
+        printer_type: 'browser',
+        printed_by: audit.printedBy || null,
+        print_duration_ms: audit.printDurationMs,
+        print_status: audit.printStatus,
+        is_reprint: audit.isReprint,
+        reprint_reason: audit.reprintReason,
+        copies: audit.copies,
+        metadata: audit.metadata
+      });
+
+    if (error) throw error;
+  } catch (err: any) {
+    console.warn('Could not write print audit to receipt_print_history table, logging to activity_logs fallback instead.', err);
+    // 2. Fallback: Write print event to activity_logs
+    try {
+      await supabase.from('activity_logs').insert({
+        restaurant_id: audit.restaurantId,
+        user_id: audit.printedBy || null,
+        action: audit.isReprint ? 'receipt_reprinted' : 'receipt_printed',
+        entity_type: 'order',
+        entity_id: audit.orderId,
+        metadata: {
+          receipt_type: audit.receiptType,
+          receipt_number: audit.receiptNumber,
+          printer: audit.printerName,
+          duration_ms: audit.printDurationMs,
+          status: audit.printStatus,
+          is_reprint: audit.isReprint,
+          reprint_reason: audit.reprintReason,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (fallbackErr) {
+      console.error('Failed to log print audit log:', fallbackErr);
+    }
   }
 }
