@@ -60,12 +60,11 @@ export class TableService extends BaseService {
   }
 
   async updateTableStatus(id: string, status: TableStatus, previous: TableStatus, user: { id: string; restaurant_id: string; full_name?: string | null; role?: { name?: string } }, reason?: string): Promise<ApiResponse<Table>> {
-    const transitions: Partial<Record<TableStatus, TableStatus[]>> = { available: ['occupied','reserved','out_of_service','closed'], reserved: ['occupied'], occupied: ['cleaning'], cleaning: ['available'], out_of_service: ['available'], closed: ['available'] };
+    const transitions: Partial<Record<TableStatus, TableStatus[]>> = { available: ['occupied','reserved','out_of_service','closed'], reserved: ['occupied','available'], occupied: ['cleaning','out_of_service'], cleaning: ['available'], out_of_service: ['available'], closed: ['available'] };
     const role = user.role?.name;
-    const cashierAllowed: TableStatus[] = ['available','occupied','reserved','cleaning'];
-    if (role === 'Kitchen' || (role === 'Cashier' && !cashierAllowed.includes(status)) || (status === 'closed' && role !== 'Owner') || (status === 'out_of_service' && !['Owner','Manager'].includes(role || ''))) return this.createClientError('You do not have permission to set this status.') as ApiResponse<Table>;
+    if (role === 'Kitchen' || (status === 'closed' && role !== 'Owner')) return this.createClientError('You do not have permission to set this status.') as ApiResponse<Table>;
     if (!transitions[previous]?.includes(status)) return this.createClientError(`Cannot change a ${previous} table to ${status}.`) as ApiResponse<Table>;
-    if (['cleaning','reserved','out_of_service'].includes(status) && !reason?.trim()) return this.createClientError('A reason is required for this status change.') as ApiResponse<Table>;
+    if (['cleaning','reserved'].includes(status) && !reason?.trim()) return this.createClientError('A reason is required for this status change.') as ApiResponse<Table>;
     const result = await this.handleCall<Table>(
       supabase.from('tables').update({ status })
         .eq('id', id)
@@ -122,14 +121,8 @@ export class TableService extends BaseService {
       if (newStatus === 'available' && hasUnpaidBill) {
         throw new Error('Cannot mark table as Available when an unpaid bill exists.');
       }
-      if (newStatus === 'reserved' && previousStatus === 'occupied') {
-        throw new Error('Cannot mark table as Reserved while it is Occupied.');
-      }
       if (newStatus === 'cleaning' && hasActiveKitchenOrder) {
         throw new Error('Cannot mark table as Cleaning while kitchen orders are still active.');
-      }
-      if (newStatus === 'out_of_service' && previousStatus === 'occupied') {
-        throw new Error('Cannot mark table as Out of Service while it is Occupied.');
       }
 
       const result = await this.handleCall<Table>(

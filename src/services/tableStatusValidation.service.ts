@@ -205,7 +205,6 @@ export class TableStatusValidationService {
       const hasKitchenActive = activeOrders.some((o: any) => 
         ['pending', 'preparing'].includes(o.status)
       );
-      const hasUnpaid = activeOrders.length > 0 || Number(table.current_bill) > 0;
 
       let allowed = true;
       let reasonText = '';
@@ -227,12 +226,8 @@ export class TableStatusValidationService {
           suggestedAction = 'none';
         }
       } else if (newStatus === 'out_of_service') {
-        if (table.status === 'occupied' || hasUnpaid) {
-          allowed = false;
-          reasonText = 'Table Active / Occupied';
-          errorMsg = 'Resolve orders and release guests before marking out of service.';
-          suggestedAction = 'none';
-        }
+        // Out of service is always allowed — it is an admin/manager override.
+        // No blocking validation for this status.
       }
 
       if (!allowed) {
