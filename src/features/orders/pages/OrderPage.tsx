@@ -403,9 +403,31 @@ export function OrderPage() {
   // Race conditions between rapid taps are impossible.
   // ─────────────────────────────────────────────────────────────────────────
 
+  /** Validates that a valid authenticated session exists before DB writes. */
+  const ensureValidSession = async (): Promise<boolean> => {
+    if (!user?.id || !user?.restaurant_id) {
+      toast({ title: 'Auth Error', description: 'User profile or restaurant session not loaded. Please log in again.', variant: 'destructive' });
+      return false;
+    }
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session) {
+      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+      if (refreshErr || !refreshed.session) {
+        toast({ title: 'Session Expired', description: 'Your session has expired. Please log in again.', variant: 'destructive' });
+        navigate('/login');
+        return false;
+      }
+    }
+    return true;
+  };
+
   /** Creates a new draft order if one doesn't exist. Returns the orderId. */
   const ensureOrder = async (): Promise<string | null> => {
     if (!selectedTableId) return null;
+
+    // Verify session validity before writing to database
+    const isValidSession = await ensureValidSession();
+    if (!isValidSession) return null;
 
     // Use ref for immediate value — React state may not have committed yet
     const existingId = activeOrderIdRef.current;
@@ -429,7 +451,13 @@ export function OrderPage() {
       .select()
       .single();
 
-    if (error || !newOrder) return null;
+    if (error) {
+      console.error('Failed to insert order:', error);
+      toast({ title: 'Order Creation Error', description: error.message, variant: 'destructive' });
+      return null;
+    }
+
+    if (!newOrder) return null;
 
     setActiveOrderId(newOrder.id);
     activeOrderIdRef.current = newOrder.id;
