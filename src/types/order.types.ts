@@ -43,6 +43,7 @@ export interface OrderWithItems extends Order {
 }
 
 export interface CartItem {
+  db_id?: string;          // DB order_item.id — set after INSERT, used for targeted UPDATE/DELETE
   menu_item_id: string;
   item_name: string;
   category_name: string | null;
