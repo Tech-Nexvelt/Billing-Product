@@ -88,6 +88,17 @@ export function OrderPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
+  // Tracks DB order_item.id per menu_item_id so targeted UPDATE/DELETE never touches other rows.
+  // This is the key to eliminating the race condition: no cross-item comparison needed.
+  const [dbItemIds, setDbItemIds] = useState<Record<string, string>>({});
+  const dbItemIdsRef = useRef<Record<string, string>>({});
+  // Keep ref always current so async handlers don't read stale state
+  useEffect(() => { dbItemIdsRef.current = dbItemIds; }, [dbItemIds]);
+
+  // Keep activeOrderId in a ref too for async handlers that need the current value immediately
+  const activeOrderIdRef = useRef<string | null>(null);
+  useEffect(() => { activeOrderIdRef.current = activeOrderId; }, [activeOrderId]);
+
   // Enterprise Modals
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
@@ -162,6 +173,14 @@ export function OrderPage() {
           setCart(loadedCart);
           setHasUnsavedChanges(false);
 
+          // Build dbItemIds map from DB rows so targeted mutations know which row to update/delete
+          const ids: Record<string, string> = {};
+          activeOrder.order_items
+            .filter((oi: any) => !oi.deleted_at)
+            .forEach((oi: any) => { ids[oi.menu_item_id] = oi.id; });
+          setDbItemIds(ids);
+          dbItemIdsRef.current = ids;
+
           // Restore KOT-printed quantities for this order from localStorage
           try {
             const savedKot = localStorage.getItem(`nexvelt_pos_kot_${activeOrder.id}`);
@@ -183,6 +202,9 @@ export function OrderPage() {
             setCart(JSON.parse(cachedCart));
             setSpecialInstructions(cachedNotes || '');
             setActiveOrderId(null);
+            activeOrderIdRef.current = null;
+            setDbItemIds({});
+            dbItemIdsRef.current = {};
             setKotPrintedQtys({});
             setHasUnsavedChanges(true);
             toast({
@@ -193,6 +215,9 @@ export function OrderPage() {
             setCart([]);
             setSpecialInstructions('');
             setActiveOrderId(null);
+            activeOrderIdRef.current = null;
+            setDbItemIds({});
+            dbItemIdsRef.current = {};
             setKotPrintedQtys({});
             setHasUnsavedChanges(false);
           }
@@ -608,76 +633,282 @@ export function OrderPage() {
     return null;
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // TARGETED CART OPERATIONS
+  // Each function touches exactly ONE DB row. No cross-item comparison.
+  // Race conditions between rapid taps are impossible.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Creates a new draft order if one doesn't exist. Returns the orderId. */
+  const ensureOrder = async (): Promise<string | null> => {
+    if (!selectedTableId) return null;
+
+    // Use ref for immediate value — React state may not have committed yet
+    const existingId = activeOrderIdRef.current;
+    if (existingId) return existingId;
+
+    const activeTableObj = tables.find((t) => t.id === selectedTableId);
+    if (!activeTableObj) return null;
+
+    const { data: newOrder, error } = await supabase
+      .from('orders')
+      .insert({
+        restaurant_id: user!.restaurant_id,
+        created_by: user!.id,
+        table_id: selectedTableId,
+        floor_id: activeTableObj.floor_id,
+        status: 'draft',
+        subtotal: 0,
+        tax_amount: 0,
+        grand_total: 0,
+      })
+      .select()
+      .single();
+
+    if (error || !newOrder) return null;
+
+    setActiveOrderId(newOrder.id);
+    activeOrderIdRef.current = newOrder.id;
+    addOrder(newOrder);
+
+    // Mark table occupied
+    const res = await tableService.updateTableStatusValidated(selectedTableId, 'occupied', user!);
+    if (res.data) updateTable(res.data);
+
+    return newOrder.id;
+  };
+
+  /** Recalculates and persists order + table totals from the given cart. */
+  const updateOrderTotals = async (currentCart: CartItem[], orderId: string) => {
+    const newSubtotal = currentCart.reduce((s, i) => s + i.item_total, 0);
+    const newTax = newSubtotal * 0.05;
+    const newTotal = newSubtotal + newTax;
+
+    await supabase
+      .from('orders')
+      .update({ subtotal: newSubtotal, tax_amount: newTax, grand_total: newTotal, updated_by: user!.id })
+      .eq('id', orderId);
+
+    await supabase
+      .from('tables')
+      .update({ current_bill: newTotal })
+      .eq('id', selectedTableId);
+  };
+
   const handleAddToCart = async (item: MenuItemWithTags) => {
     if (!selectedTableId) {
       toast({ title: 'Select Table', description: 'Assign a table first.', variant: 'destructive' });
       return;
     }
-    const originalCart = [...cart];
 
-    // Compute next cart
-    let nextCart: CartItem[] = [];
+    // Read current cart from state — optimistic update first
     const existing = cart.find((i) => i.menu_item_id === item.id);
-    if (existing) {
-      nextCart = cart.map((i) =>
-        i.menu_item_id === item.id
-          ? { ...i, quantity: i.quantity + 1, item_total: (i.quantity + 1) * i.unit_price }
-          : i
-      );
-    } else {
-      nextCart = [
-        ...cart,
-        {
-          menu_item_id: item.id,
-          item_name: item.name,
-          category_name: categories.find((c) => c.id === item.category_id)?.name || '',
-          unit_price: item.selling_price,
-          quantity: 1,
-          item_total: item.selling_price,
-        },
-      ];
-    }
+    const nextCart: CartItem[] = existing
+      ? cart.map((i) =>
+          i.menu_item_id === item.id
+            ? { ...i, quantity: i.quantity + 1, item_total: (i.quantity + 1) * i.unit_price }
+            : i
+        )
+      : [
+          ...cart,
+          {
+            menu_item_id: item.id,
+            item_name: item.name,
+            category_name: categories.find((c) => c.id === item.category_id)?.name || '',
+            unit_price: item.selling_price,
+            quantity: 1,
+            item_total: item.selling_price,
+          },
+        ];
 
     setCart(nextCart);
     toast({ title: 'Added to cart', description: `${item.name} has been added.` });
 
     try {
-      await syncCartToDb(nextCart);
-    } catch (err) {
-      setCart(originalCart);
+      // Ensure order exists
+      const orderId = await ensureOrder();
+      if (!orderId) return;
+
+      const existingDbId = dbItemIdsRef.current[item.id];
+
+      if (existing && existingDbId) {
+        // TARGETED UPDATE — only this one row, nothing else touched
+        const newQty = existing.quantity + 1;
+        await supabase
+          .from('order_items')
+          .update({ quantity: newQty, item_total: newQty * item.selling_price })
+          .eq('id', existingDbId);
+      } else if (!existingDbId) {
+        // TARGETED INSERT — one new row
+        const { data: inserted, error: insErr } = await supabase
+          .from('order_items')
+          .insert({
+            order_id: orderId,
+            menu_item_id: item.id,
+            restaurant_id: user!.restaurant_id,
+            item_name: item.name,
+            category_name: categories.find((c) => c.id === item.category_id)?.name || null,
+            unit_price: item.selling_price,
+            quantity: 1,
+            item_total: item.selling_price,
+          })
+          .select('id')
+          .single();
+
+        if (insErr) throw insErr;
+        if (inserted) {
+          // Record DB row ID for future targeted ops
+          const updated = { ...dbItemIdsRef.current, [item.id]: inserted.id };
+          setDbItemIds(updated);
+          dbItemIdsRef.current = updated;
+        }
+      }
+
+      await updateOrderTotals(nextCart, orderId);
+    } catch (err: any) {
+      // Rollback optimistic update on failure
+      setCart(cart);
+      toast({ title: 'Sync Error', description: err.message, variant: 'destructive' });
     }
   };
 
   const handleUpdateQuantity = async (itemId: string, delta: number) => {
     const originalCart = [...cart];
-    const nextCart = cart
-      .map((i) => {
-        if (i.menu_item_id !== itemId) return i;
-        const nextQty = i.quantity + delta;
-        if (nextQty <= 0) return null;
-        return { ...i, quantity: nextQty, item_total: nextQty * i.unit_price };
-      })
-      .filter(Boolean) as CartItem[];
+    const targetItem = cart.find((i) => i.menu_item_id === itemId);
+    if (!targetItem) return;
+
+    const nextQty = targetItem.quantity + delta;
+    const nextCart =
+      nextQty <= 0
+        ? cart.filter((i) => i.menu_item_id !== itemId)
+        : cart.map((i) =>
+            i.menu_item_id === itemId
+              ? { ...i, quantity: nextQty, item_total: nextQty * i.unit_price }
+              : i
+          );
 
     setCart(nextCart);
 
     try {
-      await syncCartToDb(nextCart);
-    } catch (err) {
+      const orderId = activeOrderIdRef.current;
+      const dbId = dbItemIdsRef.current[itemId];
+
+      if (orderId && dbId) {
+        if (nextQty <= 0) {
+          // TARGETED SOFT-DELETE — only this row
+          await supabase
+            .from('order_items')
+            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+            .eq('id', dbId);
+
+          // Remove from dbItemIds
+          const updated = { ...dbItemIdsRef.current };
+          delete updated[itemId];
+          setDbItemIds(updated);
+          dbItemIdsRef.current = updated;
+
+          await supabase.from('activity_logs').insert({
+            restaurant_id: user!.restaurant_id,
+            user_id: user!.id,
+            action: 'cart_item_deleted',
+            entity_type: 'order_item',
+            entity_id: dbId,
+            metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
+          });
+        } else {
+          // TARGETED UPDATE — only this row
+          await supabase
+            .from('order_items')
+            .update({ quantity: nextQty, item_total: nextQty * targetItem.unit_price })
+            .eq('id', dbId);
+        }
+
+        await updateOrderTotals(nextCart, orderId);
+
+        // If cart emptied, release the order and table
+        if (nextCart.length === 0) {
+          await supabase
+            .from('orders')
+            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id, status: 'cancelled' })
+            .eq('id', orderId);
+          setActiveOrderId(null);
+          activeOrderIdRef.current = null;
+          setDbItemIds({});
+          dbItemIdsRef.current = {};
+          await supabase.from('tables').update({ current_bill: 0 }).eq('id', selectedTableId!);
+          const res = await tableService.updateTableStatusValidated(selectedTableId!, 'available', user!);
+          if (res.data) updateTable(res.data);
+        }
+      }
+    } catch (err: any) {
       setCart(originalCart);
+      toast({ title: 'Sync Error', description: err.message, variant: 'destructive' });
     }
   };
 
   const handleRemoveFromCart = async (itemId: string) => {
     const originalCart = [...cart];
-    const nextCart = cart.filter((i) => i.menu_item_id !== itemId);
+    const targetItem = cart.find((i) => i.menu_item_id === itemId);
+    if (!targetItem) return;
 
+    const nextCart = cart.filter((i) => i.menu_item_id !== itemId);
     setCart(nextCart);
 
     try {
-      await syncCartToDb(nextCart);
-    } catch (err) {
+      const orderId = activeOrderIdRef.current;
+      const dbId = dbItemIdsRef.current[itemId];
+
+      if (orderId && dbId) {
+        // TARGETED SOFT-DELETE — only this single row
+        await supabase
+          .from('order_items')
+          .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+          .eq('id', dbId);
+
+        // Remove from tracking map
+        const updated = { ...dbItemIdsRef.current };
+        delete updated[itemId];
+        setDbItemIds(updated);
+        dbItemIdsRef.current = updated;
+
+        await supabase.from('activity_logs').insert({
+          restaurant_id: user!.restaurant_id,
+          user_id: user!.id,
+          action: 'cart_item_deleted',
+          entity_type: 'order_item',
+          entity_id: dbId,
+          metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
+        });
+
+        if (nextCart.length === 0) {
+          // Last item removed: cancel the order and release the table
+          await supabase.from('orders').select('grand_total').eq('id', orderId).single();
+          await supabase
+            .from('orders')
+            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id, status: 'cancelled' })
+            .eq('id', orderId);
+          setActiveOrderId(null);
+          activeOrderIdRef.current = null;
+          setDbItemIds({});
+          dbItemIdsRef.current = {};
+          await supabase.from('tables').update({ current_bill: 0 }).eq('id', selectedTableId!);
+          const res = await tableService.updateTableStatusValidated(selectedTableId!, 'available', user!);
+          if (res.data) updateTable(res.data);
+          await supabase.from('activity_logs').insert({
+            restaurant_id: user!.restaurant_id,
+            user_id: user!.id,
+            action: 'order_emptied',
+            entity_type: 'order',
+            entity_id: orderId,
+            metadata: { table_id: selectedTableId, cashier: user!.full_name || 'Cashier' }
+          });
+        } else {
+          await updateOrderTotals(nextCart, orderId);
+        }
+      }
+    } catch (err: any) {
       setCart(originalCart);
+      toast({ title: 'Sync Error', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -939,6 +1170,9 @@ export function OrderPage() {
       setCart([]);
       setSpecialInstructions('');
       setActiveOrderId(null);
+      activeOrderIdRef.current = null;
+      setDbItemIds({});
+      dbItemIdsRef.current = {};
       setKotPrintedQtys({});
       setHasUnsavedChanges(false);
 
@@ -1031,6 +1265,9 @@ export function OrderPage() {
       localStorage.removeItem(`nexvelt_pos_notes_${selectedTableId}`);
       localStorage.removeItem(`nexvelt_pos_kot_${activeOrderId}`);
       setKotPrintedQtys({});
+      setDbItemIds({});
+      dbItemIdsRef.current = {};
+      activeOrderIdRef.current = null;
 
 
       setCompletedPaymentMethod(paymentMethod);
