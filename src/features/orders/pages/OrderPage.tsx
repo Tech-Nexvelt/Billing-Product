@@ -152,19 +152,30 @@ export function OrderPage() {
           setActiveOrderId(activeOrder.id);
           setSpecialInstructions(activeOrder.special_instructions || '');
 
-          // Load cart — each item carries its own DB row id (db_id) for targeted ops
-          const loadedCart: CartItem[] = activeOrder.order_items
-            .filter((oi: any) => !oi.deleted_at)
-            .map((oi: any) => ({
-              db_id: oi.id,
-              menu_item_id: oi.menu_item_id,
-              item_name: oi.item_name,
-              category_name: oi.category_name || '',
-              unit_price: Number(oi.unit_price),
-              quantity: oi.quantity,
-              item_total: Number(oi.item_total),
-              special_notes: oi.special_notes || '',
-            }));
+          // Load cart — consolidate non-deleted items by menu_item_id
+          const rawItems = activeOrder.order_items.filter((oi: any) => !oi.deleted_at);
+          const itemMap = new Map<string, CartItem>();
+
+          for (const oi of rawItems) {
+            const key = oi.menu_item_id || oi.id;
+            const existingItem = itemMap.get(key);
+            if (existingItem) {
+              existingItem.quantity += oi.quantity;
+              existingItem.item_total += Number(oi.item_total);
+            } else {
+              itemMap.set(key, {
+                db_id: oi.id,
+                menu_item_id: oi.menu_item_id,
+                item_name: oi.item_name,
+                category_name: oi.category_name || '',
+                unit_price: Number(oi.unit_price),
+                quantity: oi.quantity,
+                item_total: Number(oi.item_total),
+                special_notes: oi.special_notes || '',
+              });
+            }
+          }
+          const loadedCart: CartItem[] = Array.from(itemMap.values());
           setCart(loadedCart);
           setHasUnsavedChanges(false);
 
@@ -548,28 +559,46 @@ export function OrderPage() {
       const orderId = activeOrderIdRef.current;
       const dbId = targetItem.db_id;   // stable DB row id from CartItem itself
 
-      if (orderId && dbId) {
+      if (orderId) {
         if (nextQty <= 0) {
-          // TARGETED SOFT-DELETE — only this row
-          await supabase
-            .from('order_items')
-            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
-            .eq('id', dbId);
+          // TARGETED SOFT-DELETE — delete by db_id or menu_item_id fallback
+          if (dbId) {
+            await supabase
+              .from('order_items')
+              .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+              .eq('id', dbId);
+          } else {
+            await supabase
+              .from('order_items')
+              .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+              .eq('order_id', orderId)
+              .eq('menu_item_id', itemId)
+              .is('deleted_at', null);
+          }
 
           await supabase.from('activity_logs').insert({
             restaurant_id: user!.restaurant_id,
             user_id: user!.id,
             action: 'cart_item_deleted',
             entity_type: 'order_item',
-            entity_id: dbId,
+            entity_id: dbId || itemId,
             metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
           });
         } else {
-          // TARGETED UPDATE — only this row
-          await supabase
-            .from('order_items')
-            .update({ quantity: nextQty, item_total: nextQty * targetItem.unit_price })
-            .eq('id', dbId);
+          // TARGETED UPDATE — update by db_id or menu_item_id fallback
+          if (dbId) {
+            await supabase
+              .from('order_items')
+              .update({ quantity: nextQty, item_total: nextQty * targetItem.unit_price })
+              .eq('id', dbId);
+          } else {
+            await supabase
+              .from('order_items')
+              .update({ quantity: nextQty, item_total: nextQty * targetItem.unit_price })
+              .eq('order_id', orderId)
+              .eq('menu_item_id', itemId)
+              .is('deleted_at', null);
+          }
         }
 
         if (nextCart.length === 0) {
@@ -604,19 +633,29 @@ export function OrderPage() {
       const orderId = activeOrderIdRef.current;
       const dbId = targetItem.db_id;   // stable DB row id from CartItem itself
 
-      if (orderId && dbId) {
-        // TARGETED SOFT-DELETE — exactly this one row
+      if (orderId) {
+        // TARGETED SOFT-DELETE — delete by db_id or menu_item_id fallback
+        if (dbId) {
+          await supabase
+            .from('order_items')
+            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+            .eq('id', dbId);
+        }
+        
+        // Also ensure any non-deleted items matching menu_item_id for this order are soft deleted
         await supabase
           .from('order_items')
           .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
-          .eq('id', dbId);
+          .eq('order_id', orderId)
+          .eq('menu_item_id', itemId)
+          .is('deleted_at', null);
 
         await supabase.from('activity_logs').insert({
           restaurant_id: user!.restaurant_id,
           user_id: user!.id,
           action: 'cart_item_deleted',
           entity_type: 'order_item',
-          entity_id: dbId,
+          entity_id: dbId || itemId,
           metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
         });
 
