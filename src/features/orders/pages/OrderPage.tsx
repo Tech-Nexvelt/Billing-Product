@@ -6,7 +6,6 @@ import { useTableStore } from '@/stores/table.store';
 import { useOrderStore } from '@/stores/order.store';
 import { menuService } from '@/services/menu.service';
 import { tableService } from '@/services/table.service';
-import { orderService } from '@/services/order.service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -103,6 +102,10 @@ export function OrderPage() {
   const [printHistory, setPrintHistory] = useState<any[]>([]);
   const [completedPaymentMethod, setCompletedPaymentMethod] = useState('CASH');
 
+  // KOT tracking: maps menu_item_id → qty already sent to kitchen for this order.
+  // Persisted to localStorage so it survives page refresh.
+  const [kotPrintedQtys, setKotPrintedQtys] = useState<Record<string, number>>({});
+
   const [isValidationOpen, setIsValidationOpen] = useState(false);
   const [validationParams, setValidationParams] = useState<{
     tableId: string;
@@ -143,19 +146,31 @@ export function OrderPage() {
           const activeOrder = activeOrders[0];
           setActiveOrderId(activeOrder.id);
           setSpecialInstructions(activeOrder.special_instructions || '');
-          
-          const loadedCart: CartItem[] = activeOrder.order_items.map((oi: any) => ({
-            menu_item_id: oi.menu_item_id,
-            item_name: oi.item_name,
-            category_name: oi.category_name || '',
-            unit_price: Number(oi.unit_price),
-            quantity: oi.quantity,
-            item_total: Number(oi.item_total),
-            special_notes: oi.special_notes || '',
-          }));
+
+          // Only map non-deleted items into the cart
+          const loadedCart: CartItem[] = activeOrder.order_items
+            .filter((oi: any) => !oi.deleted_at)
+            .map((oi: any) => ({
+              menu_item_id: oi.menu_item_id,
+              item_name: oi.item_name,
+              category_name: oi.category_name || '',
+              unit_price: Number(oi.unit_price),
+              quantity: oi.quantity,
+              item_total: Number(oi.item_total),
+              special_notes: oi.special_notes || '',
+            }));
           setCart(loadedCart);
           setHasUnsavedChanges(false);
-          
+
+          // Restore KOT-printed quantities for this order from localStorage
+          try {
+            const savedKot = localStorage.getItem(`nexvelt_pos_kot_${activeOrder.id}`);
+            if (savedKot) setKotPrintedQtys(JSON.parse(savedKot));
+            else setKotPrintedQtys({});
+          } catch (_) {
+            setKotPrintedQtys({});
+          }
+
           toast({
             title: shouldResumeBill ? 'Resumed Bill' : 'Resumed Order',
             description: `Loaded order details for Table ${activeTable?.table_number || ''}`,
@@ -168,6 +183,7 @@ export function OrderPage() {
             setCart(JSON.parse(cachedCart));
             setSpecialInstructions(cachedNotes || '');
             setActiveOrderId(null);
+            setKotPrintedQtys({});
             setHasUnsavedChanges(true);
             toast({
               title: 'Recovered Cart',
@@ -177,6 +193,7 @@ export function OrderPage() {
             setCart([]);
             setSpecialInstructions('');
             setActiveOrderId(null);
+            setKotPrintedQtys({});
             setHasUnsavedChanges(false);
           }
         }
@@ -360,8 +377,9 @@ export function OrderPage() {
   const grandTotal = subtotal + taxAmount + serviceChargeAmount;
 
   // Cart operations & Database Sync
-  const syncCartToDb = async (newCart: CartItem[]) => {
-    if (!selectedTableId) return;
+  // Returns the active order ID (existing or newly created) so callers can use it immediately.
+  const syncCartToDb = async (newCart: CartItem[]): Promise<string | null> => {
+    if (!selectedTableId) return null;
 
     try {
       const activeTableObj = tables.find((t) => t.id === selectedTableId);
@@ -460,10 +478,12 @@ export function OrderPage() {
           });
         } else {
           // Sync items using the Compare -> Insert/Update/Delete algorithm
+          // IMPORTANT: filter out soft-deleted rows so they don't poison the dbItemsMap
           const { data: dbItems, error: fetchErr } = await supabase
             .from('order_items')
             .select('*')
-            .eq('order_id', orderId);
+            .eq('order_id', orderId)
+            .is('deleted_at', null);
           if (fetchErr) throw fetchErr;
 
           const dbItemsMap = new Map((dbItems || []).map((i) => [i.menu_item_id, i]));
@@ -579,11 +599,13 @@ export function OrderPage() {
       }
 
       setHasUnsavedChanges(false);
+      return orderId;
     } catch (err: any) {
       console.error('Error syncing cart changes:', err);
       toast({ title: 'Sync Error', description: err.message, variant: 'destructive' });
       throw err;
     }
+    return null;
   };
 
   const handleAddToCart = async (item: MenuItemWithTags) => {
@@ -669,6 +691,9 @@ export function OrderPage() {
   };
 
   // 1. KOT Action: Incremental Print
+  // Delta is computed against kotPrintedQtys (what was previously sent to kitchen),
+  // NOT against DB quantities. DB and cart are already synced by syncCartToDb on every
+  // item change, so comparing cart vs DB always yields zero delta — wrong!
   const handlePrintKotClick = async () => {
     if (!selectedTableId) {
       toast({ title: 'Select Table', description: 'Assign a table first.', variant: 'destructive' });
@@ -684,80 +709,30 @@ export function OrderPage() {
       const activeTable = tables.find((t) => t.id === selectedTableId);
       if (!activeTable) throw new Error('Table not found.');
 
-      let orderId = activeOrderId;
-      let newItemsToPrint: CartItem[] = [];
+      // Step 1: Ensure DB is fully in sync with the current cart.
+      // syncCartToDb returns the orderId (existing or newly created).
+      const orderId = await syncCartToDb(cart);
+      if (!orderId) throw new Error('Could not create or find order.');
 
-      if (orderId) {
-        // Sync draft to database first
-        const { data: dbItems } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', orderId);
-          
-        const dbItemsMap = new Map((dbItems || []).map(i => [i.menu_item_id, i]));
-        
-        // Find incremental items
-        for (const item of cart) {
-          const dbItem = dbItemsMap.get(item.menu_item_id);
-          const oldQty = dbItem ? dbItem.quantity : 0;
-          const diff = item.quantity - oldQty;
-          if (diff > 0) {
-            newItemsToPrint.push({ ...item, quantity: diff });
-          }
-        }
-
-        // Sync local cart to DB
-        await supabase.from('order_items').delete().eq('order_id', orderId);
-        const orderItems = cart.map((item: CartItem) => ({
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          restaurant_id: user!.restaurant_id,
-          item_name: item.item_name,
-          category_name: item.category_name || null,
-          unit_price: item.unit_price,
-          quantity: item.quantity,
-          item_total: item.item_total,
-          special_notes: item.special_notes || null,
-        }));
-        await supabase.from('order_items').insert(orderItems);
-
-        await supabase
-          .from('orders')
-          .update({
-            subtotal,
-            tax_amount: taxAmount,
-            grand_total: grandTotal,
-            special_instructions: specialInstructions || null,
-            updated_by: user!.id,
-          })
-          .eq('id', orderId);
-      } else {
-        // Create new order
-        const res = await orderService.createOrder(
-          user!.restaurant_id,
-          user!.id,
-          selectedTableId,
-          activeTable.floor_id,
-          cart,
-          specialInstructions
-        );
-        if (res.error) throw new Error(res.error.message);
-        if (res.data) {
-          orderId = res.data.id;
-          setActiveOrderId(orderId);
-          addOrder(res.data);
-          newItemsToPrint = [...cart];
+      // Step 2: Compute incremental items by comparing cart qty
+      // against what was PREVIOUSLY sent to the kitchen (kotPrintedQtys).
+      // This is independent of DB qty, so adding item A and immediately
+      // clicking Print KOT always produces delta = 1 for item A.
+      const newItemsToPrint: CartItem[] = [];
+      for (const item of cart) {
+        const previouslyPrinted = kotPrintedQtys[item.menu_item_id] ?? 0;
+        const diff = item.quantity - previouslyPrinted;
+        if (diff > 0) {
+          newItemsToPrint.push({ ...item, quantity: diff });
         }
       }
 
-      setHasUnsavedChanges(false);
-
       if (newItemsToPrint.length === 0) {
-        toast({ title: 'Already Printed', description: 'No new items added to KOT.' });
+        toast({ title: 'Already Printed', description: 'All current items have already been sent to the kitchen.' });
         return;
       }
 
-      // Retrieve sequence number
+      // Step 3: Get KOT sequence number
       const { data: kotSeq } = await supabase.rpc('get_next_receipt_number', {
         p_restaurant_id: user!.restaurant_id,
         p_rule_type: 'kot'
@@ -765,14 +740,15 @@ export function OrderPage() {
 
       const { data: printers } = await printerService.getAll(user!.restaurant_id);
 
+      // Step 4: Send KOT to kitchen printer
       await unifiedPrintReceipt({
         type: 'kot',
         restaurant,
         table: activeTable,
         floorName: activeTable.floor_id,
         cashierName: user?.full_name || 'Cashier',
-        orderNumber: kotSeq || orderId!.substring(0, 8).toUpperCase(),
-        orderId: orderId!,
+        orderNumber: kotSeq || orderId.substring(0, 8).toUpperCase(),
+        orderId,
         items: newItemsToPrint,
         subtotal,
         taxRate,
@@ -787,7 +763,33 @@ export function OrderPage() {
         printers: printers || [],
       });
 
-      toast({ title: 'KOT Sent', description: `Printed ${newItemsToPrint.length} new items.` });
+      // Step 5: Update kotPrintedQtys to record what was just sent to kitchen.
+      // Merge new quantities on top of existing ones.
+      const updatedKotQtys = { ...kotPrintedQtys };
+      for (const item of newItemsToPrint) {
+        updatedKotQtys[item.menu_item_id] = (kotPrintedQtys[item.menu_item_id] ?? 0) + item.quantity;
+      }
+      setKotPrintedQtys(updatedKotQtys);
+      // Persist so it survives refresh
+      localStorage.setItem(`nexvelt_pos_kot_${orderId}`, JSON.stringify(updatedKotQtys));
+
+      // Step 6: Log KOT activity
+      await supabase.from('activity_logs').insert({
+        restaurant_id: user!.restaurant_id,
+        user_id: user!.id,
+        action: 'kot_printed',
+        entity_type: 'order',
+        entity_id: orderId,
+        metadata: {
+          items_count: newItemsToPrint.length,
+          items: newItemsToPrint.map(i => ({ name: i.item_name, qty: i.quantity })),
+          kot_number: kotSeq || orderId.substring(0, 8).toUpperCase(),
+          cashier: user!.full_name || 'Cashier',
+          timestamp: new Date().toISOString(),
+        }
+      });
+
+      toast({ title: '✅ KOT Sent', description: `${newItemsToPrint.length} item(s) sent to kitchen.` });
     } catch (err: any) {
       toast({ title: 'KOT Error', description: err.message, variant: 'destructive' });
     } finally {
@@ -795,59 +797,17 @@ export function OrderPage() {
     }
   };
 
-  // 2. Customer Receipt Action
+  // 2. Customer Receipt Action → opens CheckoutDialog after ensuring DB is synced
   const handleCustomerReceiptClick = async () => {
     if (!selectedTableId || cart.length === 0) return;
     setIsPlacingOrder(true);
     try {
-      const activeTable = tables.find((t) => t.id === selectedTableId);
-      if (!activeTable) throw new Error('Table not found.');
+      // Ensure DB is fully in sync before opening checkout.
+      // syncCartToDb handles both the "no order yet" and "existing order" cases
+      // using the safe soft-delete algorithm — no hard-delete needed here.
+      const orderId = await syncCartToDb(cart);
+      if (!orderId) throw new Error('Could not create or find order.');
 
-      let orderId = activeOrderId;
-      if (!orderId) {
-        const res = await orderService.createOrder(
-          user!.restaurant_id,
-          user!.id,
-          selectedTableId,
-          activeTable.floor_id,
-          cart,
-          specialInstructions
-        );
-        if (res.error) throw new Error(res.error.message);
-        if (res.data) {
-          orderId = res.data.id;
-          setActiveOrderId(orderId);
-          addOrder(res.data);
-        }
-      } else {
-        // Sync cart changes to DB first
-        await supabase.from('order_items').delete().eq('order_id', orderId);
-        const orderItems = cart.map((item: CartItem) => ({
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          restaurant_id: user!.restaurant_id,
-          item_name: item.item_name,
-          category_name: item.category_name || null,
-          unit_price: item.unit_price,
-          quantity: item.quantity,
-          item_total: item.item_total,
-          special_notes: item.special_notes || null,
-        }));
-        await supabase.from('order_items').insert(orderItems);
-
-        await supabase
-          .from('orders')
-          .update({
-            subtotal,
-            tax_amount: taxAmount,
-            grand_total: grandTotal,
-            special_instructions: specialInstructions || null,
-            updated_by: user!.id,
-          })
-          .eq('id', orderId);
-      }
-
-      setHasUnsavedChanges(false);
       setIsCheckoutOpen(true);
     } catch (err: any) {
       toast({ title: 'Invoice Error', description: err.message, variant: 'destructive' });
@@ -901,78 +861,21 @@ export function OrderPage() {
     if (!selectedTableId || cart.length === 0) return;
     setIsPlacingOrder(true);
     try {
-      const activeTable = tables.find((t) => t.id === selectedTableId);
-      if (!activeTable) throw new Error('Table not found.');
+      // Sync cart to DB first (handles both new and existing orders safely)
+      const orderId = await syncCartToDb(cart);
+      if (!orderId) throw new Error('Could not create or find order.');
 
-      let orderId = activeOrderId;
-      if (orderId) {
-        // Sync draft to database first
-        await supabase.from('order_items').delete().eq('order_id', orderId);
-        const orderItems = cart.map((item: CartItem) => ({
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          restaurant_id: user!.restaurant_id,
-          item_name: item.item_name,
-          category_name: item.category_name || null,
-          unit_price: item.unit_price,
-          quantity: item.quantity,
-          item_total: item.item_total,
-          special_notes: item.special_notes || null,
-        }));
-        await supabase.from('order_items').insert(orderItems);
-
-        await supabase
-          .from('orders')
-          .update({
-            status: 'hold',
-            subtotal,
-            tax_amount: taxAmount,
-            grand_total: grandTotal,
-            special_instructions: specialInstructions || null,
-            updated_by: user!.id,
-          })
-          .eq('id', orderId);
-      } else {
-        // Create new order on hold
-        const { data: newOrder, error } = await supabase
-          .from('orders')
-          .insert({
-            restaurant_id: user!.restaurant_id,
-            created_by: user!.id,
-            table_id: selectedTableId,
-            floor_id: activeTable.floor_id,
-            status: 'hold',
-            subtotal,
-            tax_amount: taxAmount,
-            grand_total: grandTotal,
-            special_instructions: specialInstructions || null,
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
-        if (newOrder) {
-          orderId = newOrder.id;
-          setActiveOrderId(orderId);
-          addOrder(newOrder);
-
-          const orderItems = cart.map((item: CartItem) => ({
-            order_id: orderId,
-            menu_item_id: item.menu_item_id,
-            restaurant_id: user!.restaurant_id,
-            item_name: item.item_name,
-            category_name: item.category_name || null,
-            unit_price: item.unit_price,
-            quantity: item.quantity,
-            item_total: item.item_total,
-            special_notes: item.special_notes || null,
-          }));
-          await supabase.from('order_items').insert(orderItems);
-        }
-      }
+      // Mark the order as held
+      await supabase
+        .from('orders')
+        .update({
+          status: 'hold',
+          updated_by: user!.id,
+        })
+        .eq('id', orderId);
 
       setHasUnsavedChanges(false);
-      toast({ title: 'Bill on Hold', description: 'Table marked occupied and order draft saved.' });
+      toast({ title: 'Bill on Hold', description: 'Table marked occupied and order saved on hold.' });
       navigate('/');
     } catch (err: any) {
       toast({ title: 'Hold Error', description: err.message, variant: 'destructive' });
@@ -1027,14 +930,16 @@ export function OrderPage() {
         updateTable(res.data);
       }
 
-      // Clear local storage cache
+      // Clear local storage cache (cart + KOT tracking)
       localStorage.removeItem(`nexvelt_pos_cart_${selectedTableId}`);
       localStorage.removeItem(`nexvelt_pos_notes_${selectedTableId}`);
+      if (activeOrderId) localStorage.removeItem(`nexvelt_pos_kot_${activeOrderId}`);
 
       // Reset state
       setCart([]);
       setSpecialInstructions('');
       setActiveOrderId(null);
+      setKotPrintedQtys({});
       setHasUnsavedChanges(false);
 
       toast({
@@ -1121,9 +1026,12 @@ export function OrderPage() {
         }
       }
 
-      // Clear local storage cache
+      // Clear local storage cache (cart + KOT tracking)
       localStorage.removeItem(`nexvelt_pos_cart_${selectedTableId}`);
       localStorage.removeItem(`nexvelt_pos_notes_${selectedTableId}`);
+      localStorage.removeItem(`nexvelt_pos_kot_${activeOrderId}`);
+      setKotPrintedQtys({});
+
 
       setCompletedPaymentMethod(paymentMethod);
 
