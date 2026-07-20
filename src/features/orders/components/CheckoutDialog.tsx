@@ -11,7 +11,7 @@ interface CheckoutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   total: number;
-  onComplete: (paymentMethod: string, paidAmount: number, isPartial: boolean, splitDetails?: any, printWindow?: Window | null) => void;
+  onComplete: (paymentMethod: string, paidAmount: number, isPartial: boolean, splitDetails?: any) => void;
   onPrintPreview?: () => void;
 }
 
@@ -47,8 +47,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
 
   const handleSinglePayment = () => {
     const isPartial = isPartialPayment && singleAmountPaid < total;
-    const printWindow = window.open('', '_blank');
-    onComplete(singleMethod, singleAmountPaid, isPartial, null, printWindow);
+    onComplete(singleMethod, singleAmountPaid, isPartial, null);
   };
 
   const handleSplitPayment = () => {
@@ -67,8 +66,7 @@ export function CheckoutDialog({ open, onOpenChange, total, onComplete, onPrintP
     const methodLabel = methodsPaid.join(' + ') || 'Split';
     const isPartial = splitRemaining > 0.01;
 
-    const printWindow = window.open('', '_blank');
-    onComplete(methodLabel, splitTotal, isPartial, splitDetails, printWindow);
+    onComplete(methodLabel, splitTotal, isPartial, splitDetails);
   };
 
   const setSplitMax = (method: 'Cash' | 'UPI' | 'Card' | 'Wallet' | 'Gift Card') => {

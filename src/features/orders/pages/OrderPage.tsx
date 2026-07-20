@@ -106,6 +106,16 @@ export function OrderPage() {
   const [managers, setManagers] = useState<any[]>([]);
   const [printHistory, setPrintHistory] = useState<any[]>([]);
   const [completedPaymentMethod, setCompletedPaymentMethod] = useState('CASH');
+  const [lastCompletedOrder, setLastCompletedOrder] = useState<{
+    id: string;
+    number: string;
+    items: CartItem[];
+    subtotal: number;
+    taxAmount: number;
+    grandTotal: number;
+    specialInstructions: string | null;
+    paymentMethod: string;
+  } | null>(null);
 
   // KOT tracking: maps menu_item_id → qty already sent to kitchen for this order.
   // Persisted to localStorage so it survives page refresh.
@@ -993,10 +1003,8 @@ export function OrderPage() {
     _paidAmount: number,
     _isPartial: boolean,
     _splitDetails?: any,
-    printWindow?: Window | null,
   ) => {
     if (!activeOrderId || !selectedTableId) {
-      printWindow?.close();
       return;
     }
 
@@ -1056,6 +1064,19 @@ export function OrderPage() {
         }
       }
 
+      // Save snapshot of completed order for reprint actions in Checkout Successful modal
+      const completedData = {
+        id: activeOrderId,
+        number: invoiceNum || activeOrderId.substring(0, 8).toUpperCase(),
+        items: [...cart],
+        subtotal,
+        taxAmount,
+        grandTotal,
+        specialInstructions: specialInstructions || null,
+        paymentMethod,
+      };
+      setLastCompletedOrder(completedData);
+
       // Clear local storage cache (cart + KOT tracking)
       localStorage.removeItem(`nexvelt_pos_cart_${selectedTableId}`);
       localStorage.removeItem(`nexvelt_pos_notes_${selectedTableId}`);
@@ -1090,20 +1111,23 @@ export function OrderPage() {
         specialInstructions,
         userId: user!.id,
         printers: printers || [],
-        printWindow,
       });
 
       toast({ title: 'Payment Completed', description: 'Order completed and Customer copy printed.' });
       setIsCheckoutOpen(false);
       setIsSuccessDialogOpen(true);
     } catch (err: any) {
-      printWindow?.close();
       toast({ title: 'Failed to complete checkout', description: err.message, variant: 'destructive' });
     }
   };
 
   const handleReprintCustomerFromSuccess = async () => {
-    if (!activeOrderId) return;
+    const targetOrder = lastCompletedOrder;
+    const orderId = targetOrder?.id || activeOrderId;
+    if (!orderId) {
+      toast({ title: 'No Order Data', description: 'Order details not found for reprint.', variant: 'destructive' });
+      return;
+    }
     try {
       const activeTableObj = tables.find(t => t.id === selectedTableId);
       const { data: printers } = await printerService.getAll(user!.restaurant_id);
@@ -1114,18 +1138,18 @@ export function OrderPage() {
         table: activeTableObj,
         floorName: activeTableObj?.floor_id || 'Main Area',
         cashierName: user?.full_name || 'Cashier',
-        orderNumber: activeOrderId.substring(0, 8).toUpperCase(),
-        orderId: activeOrderId,
-        items: cart,
-        subtotal,
+        orderNumber: targetOrder?.number || orderId.substring(0, 8).toUpperCase(),
+        orderId: orderId,
+        items: targetOrder?.items || cart,
+        subtotal: targetOrder?.subtotal ?? subtotal,
         taxRate,
-        taxAmount,
+        taxAmount: targetOrder?.taxAmount ?? taxAmount,
         serviceChargeRate,
         serviceChargeAmount,
         discountAmount: 0,
-        grandTotal,
-        paymentMethod: completedPaymentMethod,
-        specialInstructions,
+        grandTotal: targetOrder?.grandTotal ?? grandTotal,
+        paymentMethod: targetOrder?.paymentMethod || completedPaymentMethod,
+        specialInstructions: targetOrder?.specialInstructions || specialInstructions,
         userId: user!.id,
         printers: printers || [],
         isReprint: true,
@@ -1138,7 +1162,12 @@ export function OrderPage() {
   };
 
   const handleReprintOwnerFromSuccess = async () => {
-    if (!activeOrderId) return;
+    const targetOrder = lastCompletedOrder;
+    const orderId = targetOrder?.id || activeOrderId;
+    if (!orderId) {
+      toast({ title: 'No Order Data', description: 'Order details not found for reprint.', variant: 'destructive' });
+      return;
+    }
     try {
       const activeTableObj = tables.find(t => t.id === selectedTableId);
       const { data: printers } = await printerService.getAll(user!.restaurant_id);
@@ -1149,18 +1178,18 @@ export function OrderPage() {
         table: activeTableObj,
         floorName: activeTableObj?.floor_id || 'Main Area',
         cashierName: user?.full_name || 'Cashier',
-        orderNumber: activeOrderId.substring(0, 8).toUpperCase(),
-        orderId: activeOrderId,
-        items: cart,
-        subtotal,
+        orderNumber: targetOrder?.number || orderId.substring(0, 8).toUpperCase(),
+        orderId: orderId,
+        items: targetOrder?.items || cart,
+        subtotal: targetOrder?.subtotal ?? subtotal,
         taxRate,
-        taxAmount,
+        taxAmount: targetOrder?.taxAmount ?? taxAmount,
         serviceChargeRate,
         serviceChargeAmount,
         discountAmount: 0,
-        grandTotal,
-        paymentMethod: completedPaymentMethod,
-        specialInstructions,
+        grandTotal: targetOrder?.grandTotal ?? grandTotal,
+        paymentMethod: targetOrder?.paymentMethod || completedPaymentMethod,
+        specialInstructions: targetOrder?.specialInstructions || specialInstructions,
         userId: user!.id,
         printers: printers || [],
         isReprint: true,
@@ -1173,7 +1202,12 @@ export function OrderPage() {
   };
 
   const handleKotAgainFromSuccess = async () => {
-    if (!activeOrderId) return;
+    const targetOrder = lastCompletedOrder;
+    const orderId = targetOrder?.id || activeOrderId;
+    if (!orderId) {
+      toast({ title: 'No Order Data', description: 'Order details not found for reprint.', variant: 'destructive' });
+      return;
+    }
     try {
       const activeTableObj = tables.find(t => t.id === selectedTableId);
       const { data: printers } = await printerService.getAll(user!.restaurant_id);
@@ -1184,18 +1218,18 @@ export function OrderPage() {
         table: activeTableObj,
         floorName: activeTableObj?.floor_id || 'Main Area',
         cashierName: user?.full_name || 'Cashier',
-        orderNumber: activeOrderId.substring(0, 8).toUpperCase(),
-        orderId: activeOrderId,
-        items: cart,
-        subtotal,
+        orderNumber: targetOrder?.number || orderId.substring(0, 8).toUpperCase(),
+        orderId: orderId,
+        items: targetOrder?.items || cart,
+        subtotal: targetOrder?.subtotal ?? subtotal,
         taxRate,
-        taxAmount,
+        taxAmount: targetOrder?.taxAmount ?? taxAmount,
         serviceChargeRate,
         serviceChargeAmount,
         discountAmount: 0,
-        grandTotal,
+        grandTotal: targetOrder?.grandTotal ?? grandTotal,
         paymentMethod: 'KOT - KITCHEN ONLY',
-        specialInstructions,
+        specialInstructions: targetOrder?.specialInstructions || specialInstructions,
         userId: user!.id,
         printers: printers || [],
         isReprint: true,
@@ -1212,10 +1246,9 @@ export function OrderPage() {
     try {
       const res = await tableService.updateTableStatusValidated(selectedTableId, 'available', user!);
       if (!res.success) throw new Error(res.message);
-      if (res.data) {
-        updateTable(res.data);
-        toast({ title: 'Table Available', description: 'Status set to Available.' });
-      }
+      if (res.data) updateTable(res.data);
+      setLastCompletedOrder(null);
+      setCart([]);
       setIsSuccessDialogOpen(false);
       navigate('/');
     } catch (err: any) {
