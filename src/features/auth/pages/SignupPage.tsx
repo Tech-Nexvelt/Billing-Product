@@ -62,6 +62,13 @@ export function SignupPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
+        <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-white dark:bg-slate-900 border border-border shadow-md mb-4 p-2 overflow-hidden">
+          <img 
+            src="/nexvelt-logo.png" 
+            alt="NexVelt Logo" 
+            className="w-full h-full object-contain scale-105"
+          />
+        </div>
         <h1 className="text-3xl font-bold text-foreground">Create your account</h1>
         <p className="mt-2 text-muted-foreground">Start running your restaurant with NexVelt</p>
       </div>
