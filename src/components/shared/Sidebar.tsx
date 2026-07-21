@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
 import { useRestaurantStore } from '@/stores/restaurant.store';
+import { RestaurantLogo } from '@/components/shared/RestaurantLogo';
 import { ROUTES } from '@/constants/routes';
 import { 
   Armchair, 
@@ -73,21 +74,16 @@ export function Sidebar({
         'h-16 flex items-center border-b border-border shrink-0 relative',
         isCollapsed ? 'justify-center px-0' : 'px-4 gap-2'
       )}>
-        <img
-          src="/logo.png"
-          alt="Logo"
-          className="w-8 h-8 object-contain rounded-md shrink-0"
-          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-        />
+        <RestaurantLogo size="sm" />
         {/* Business name — hidden when collapsed */}
         <span
           className={cn(
             'text-[15px] font-bold tracking-tight truncate transition-all duration-300',
-            isCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'opacity-100 max-w-[120px]'
+            isCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'opacity-100 max-w-[130px]'
           )}
           title={restaurant?.name}
         >
-          {restaurant?.name || 'My Restaurant'}
+          {restaurant?.name || 'NexVelt POS'}
         </span>
 
         {/* Toggle arrow — only visible on desktop, not when sidebar is in mobile overlay mode */}

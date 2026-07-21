@@ -37,6 +37,7 @@ import { managerAuthService } from '@/services/managerAuthorization.service';
 import { printerService } from '@/services/printer.service';
 import { useTopbarContent } from '@/components/shared/TopbarContext';
 import { useRestaurant } from '@/hooks/useRestaurant';
+import { RestaurantLogo } from '@/components/shared/RestaurantLogo';
 import { MenuItemImage } from '@/components/shared/MenuItemImage';
 import { TableStatus } from '@/types/table.types';
 import { tableStatusValidationService } from '@/services/tableStatusValidation.service';
@@ -263,7 +264,7 @@ export function OrderPage() {
             <span className="sm:hidden">Tables</span>
           </Button>
           <div className="hidden min-w-0 lg:block">
-            <p className="max-w-32 truncate text-sm font-extrabold text-foreground">{restaurant?.name || 'NexVelt POS'}</p>
+            <RestaurantLogo size="xs" showName nameClassName="max-w-36 truncate text-sm font-extrabold text-foreground" />
           </div>
           <div className="min-w-0 rounded-xl border border-primary/20 bg-primary/10 px-2 sm:px-2.5 py-1 flex items-center gap-1.5">
             <div className="text-left">

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PageHeader } from '@/components/shared/PageHeader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +8,7 @@ import { cn } from '@/utils/cn';
 import { kdsService } from '@/services/kds.service';
 import { useRestaurantStore } from '@/stores/restaurant.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { RestaurantLogo } from '@/components/shared/RestaurantLogo';
 import { supabase } from '@/lib/supabase';
 import { ROUTES } from '@/constants/routes';
 import { KdsOrder, KdsStatus } from '@/types/kds.types';
@@ -214,22 +214,22 @@ export function KdsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Kitchen Display"
-        description="Real-time kitchen order management"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={load} disabled={isLoading}>
-              <RefreshCw className={cn('w-4 h-4 mr-2', isLoading && 'animate-spin')} />
-              Refresh
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-              <LogOut className="w-4 h-4 mr-2" />
-              Log out
-            </Button>
-          </div>
-        }
-      />
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <RestaurantLogo size="md" showName nameClassName="text-xl font-black text-slate-800 dark:text-slate-100" />
+          <Badge className="bg-primary/10 text-primary font-bold border-none uppercase tracking-wider text-[10px]">Kitchen Display</Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={load} disabled={isLoading}>
+            <RefreshCw className={cn('w-4 h-4 mr-2', isLoading && 'animate-spin')} />
+            Refresh
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+            <LogOut className="w-4 h-4 mr-2" />
+            Log out
+          </Button>
+        </div>
+      </div>
 
       <div className="text-xs text-muted-foreground">
         Last updated: {lastRefresh.toLocaleTimeString()} • {activeOrders.length} active orders

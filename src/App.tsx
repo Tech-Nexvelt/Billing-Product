@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/providers/AuthProvider';
+import { BrandProvider } from '@/providers/BrandProvider';
 import { RealtimeProvider } from '@/providers/RealtimeProvider';
 import { AuthLayout } from '@/layouts/AuthLayout';
 import { DashboardLayout } from '@/layouts/DashboardLayout';
@@ -42,38 +43,40 @@ function LoadingScreen() {
 export default function App() {
   return (
     <AuthProvider>
-      <RealtimeProvider>
-        <Suspense fallback={<LoadingScreen />}>
-          <Routes>
-            {/* Auth Routes */}
-            <Route element={<AuthLayout />}>
-              <Route path={ROUTES.LOGIN} element={<LoginPage />} />
-              <Route path={ROUTES.SIGNUP} element={<SignupPage />} />
-              <Route path={ROUTES.FORGOT_PASSWORD} element={<ForgotPasswordPage />} />
-            </Route>
+      <BrandProvider>
+        <RealtimeProvider>
+          <Suspense fallback={<LoadingScreen />}>
+            <Routes>
+              {/* Auth Routes */}
+              <Route element={<AuthLayout />}>
+                <Route path={ROUTES.LOGIN} element={<LoginPage />} />
+                <Route path={ROUTES.SIGNUP} element={<SignupPage />} />
+                <Route path={ROUTES.FORGOT_PASSWORD} element={<ForgotPasswordPage />} />
+              </Route>
 
-            {/* Onboarding Wizard */}
-            <Route path={ROUTES.ONBOARDING} element={<OnboardingPage />} />
+              {/* Onboarding Wizard */}
+              <Route path={ROUTES.ONBOARDING} element={<OnboardingPage />} />
 
-            {/* Protected Dashboard Routes */}
-            <Route element={<DashboardLayout />}>
-              <Route path="/" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-              <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
-              <Route path={ROUTES.TABLES} element={<TablesPage />} />
-              <Route path={ROUTES.FLOORS} element={<FloorsPage />} />
-              <Route path={ROUTES.MENU} element={<MenuPage />} />
-              <Route path={ROUTES.ORDERS} element={<OrderPage />} />
-              <Route path={ROUTES.KDS} element={<KdsPage />} />
-              <Route path={ROUTES.CUSTOMERS} element={<CustomersPage />} />
-              <Route path={ROUTES.REPORTS} element={<ReportsPage />} />
-              <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
-            </Route>
+              {/* Protected Dashboard Routes */}
+              <Route element={<DashboardLayout />}>
+                <Route path="/" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+                <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
+                <Route path={ROUTES.TABLES} element={<TablesPage />} />
+                <Route path={ROUTES.FLOORS} element={<FloorsPage />} />
+                <Route path={ROUTES.MENU} element={<MenuPage />} />
+                <Route path={ROUTES.ORDERS} element={<OrderPage />} />
+                <Route path={ROUTES.KDS} element={<KdsPage />} />
+                <Route path={ROUTES.CUSTOMERS} element={<CustomersPage />} />
+                <Route path={ROUTES.REPORTS} element={<ReportsPage />} />
+                <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
+              </Route>
 
-            {/* Fallback */}
-            <Route path="*" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-          </Routes>
-        </Suspense>
-      </RealtimeProvider>
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+            </Routes>
+          </Suspense>
+        </RealtimeProvider>
+      </BrandProvider>
     </AuthProvider>
   );
 }

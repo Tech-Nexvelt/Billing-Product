@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
-import { useRestaurant } from '@/hooks/useRestaurant';
+import { RestaurantLogo } from '@/components/shared/RestaurantLogo';
 import { Button } from '@/components/ui/button';
 import { Menu, Bell, Loader2 } from 'lucide-react';
 import type { TopbarContent } from './TopbarContext';
@@ -35,7 +35,6 @@ interface TopbarProps {
 
 export function Topbar({ onMenuToggle, content }: TopbarProps) {
   const { user, setUser, logout } = useAuthStore();
-  const { restaurant } = useRestaurant();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -126,19 +125,9 @@ export function Topbar({ onMenuToggle, content }: TopbarProps) {
 
   const defaultLeft = (
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-white p-1.5 shadow-sm sm:h-11 sm:w-11">
-        <img
-          src={restaurant?.logo_url || '/logo.png'}
-          alt={`${restaurant?.name || 'NexVelt'} logo`}
-          onError={(event) => {
-            if (!event.currentTarget.src.endsWith('/logo.png')) event.currentTarget.src = '/logo.png';
-          }}
-          className="h-full w-full object-contain object-center"
-        />
-      </div>
-      <div className="min-w-0">
+      <RestaurantLogo size="md" showName nameClassName="sm:text-base text-foreground font-extrabold" />
+      <div className="min-w-0 flex flex-col justify-center">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-extrabold text-foreground sm:text-base">{restaurant?.name || 'NexVelt POS'}</span>
           <span className="hidden shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold uppercase text-primary sm:inline">
             {getShiftName()}
           </span>

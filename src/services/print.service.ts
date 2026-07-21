@@ -324,7 +324,7 @@ export async function unifiedPrintReceipt(params: UnifiedPrintParams) {
     printQueueService.addJob({
       type,
       data: {
-        restaurant_name: restaurant?.name || 'NexVelt Restaurant',
+        restaurant_name: restaurant?.name || 'NexVelt POS',
         restaurant_address: restaurant?.address || null,
         restaurant_phone: restaurant?.phone || null,
         restaurant_email: restaurant?.email || null,
