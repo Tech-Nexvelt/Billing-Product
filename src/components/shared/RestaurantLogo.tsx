@@ -12,10 +12,10 @@ interface RestaurantLogoProps {
 }
 
 const sizeMap = {
-  xs: { box: 'w-6 h-6 text-[10px]', px: 24 },
-  sm: { box: 'w-8 h-8 text-xs', px: 32 },
-  md: { box: 'w-10 h-10 text-sm', px: 40 },
-  lg: { box: 'w-12 h-12 text-base', px: 48 },
+  xs: { box: 'w-8 h-8 text-[11px]', px: 32 },
+  sm: { box: 'w-10 h-10 text-xs', px: 40 },
+  md: { box: 'w-12 h-12 text-sm', px: 48 },
+  lg: { box: 'w-16 h-16 text-base', px: 64 },
 };
 
 export function RestaurantLogo({
@@ -50,7 +50,7 @@ export function RestaurantLogo({
       <div
         style={inlineSize}
         className={cn(
-          'relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-white dark:bg-slate-900 shadow-sm transition-all duration-200 aspect-square select-none',
+          'relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-white dark:bg-slate-900 shadow-sm transition-all duration-200 aspect-square select-none p-0.5',
           sizeClasses,
           className
         )}
@@ -60,7 +60,7 @@ export function RestaurantLogo({
             src={effectiveLogoUrl}
             alt={`${effectiveName} logo`}
             onError={() => setImageError(true)}
-            className="h-full w-full object-contain object-center p-1 transform-gpu"
+            className="h-full w-full object-contain object-center scale-105 transform-gpu"
             loading="eager"
             decoding="async"
           />

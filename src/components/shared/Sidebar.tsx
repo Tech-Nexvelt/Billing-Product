@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
-import { useRestaurantStore } from '@/stores/restaurant.store';
 import { RestaurantLogo } from '@/components/shared/RestaurantLogo';
+import { useBranding } from '@/hooks/useBranding';
 import { ROUTES } from '@/constants/routes';
 import { 
   Armchair, 
@@ -39,7 +39,7 @@ export function Sidebar({
   onNavigate,
 }: SidebarProps) {
   const { logout, user } = useAuthStore();
-  const { restaurant } = useRestaurantStore();
+  const { restaurantName } = useBranding();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -81,9 +81,9 @@ export function Sidebar({
             'text-[15px] font-bold tracking-tight truncate transition-all duration-300',
             isCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'opacity-100 max-w-[130px]'
           )}
-          title={restaurant?.name}
+          title={restaurantName}
         >
-          {restaurant?.name || 'NexVelt POS'}
+          {restaurantName}
         </span>
 
         {/* Toggle arrow — only visible on desktop, not when sidebar is in mobile overlay mode */}
