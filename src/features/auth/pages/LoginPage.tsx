@@ -38,12 +38,9 @@ export function LoginPage() {
       <div className="text-center">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-muted mb-4 overflow-hidden">
           <img 
-            src="/logo.png" 
+            src="/nexvelt-logo.svg" 
             alt="NexVelt Logo" 
             className="w-12 h-12 object-contain"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
           />
         </div>
         <h1 className="text-3xl font-bold text-foreground">Welcome back</h1>

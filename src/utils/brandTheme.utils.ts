@@ -43,19 +43,4 @@ export function applyBrandTheme(branding?: RestaurantBranding | null): void {
   root.style.setProperty('--brand-sidebar', b.sidebar_color || DEFAULT_BRANDING.sidebar_color);
   root.style.setProperty('--brand-header', b.header_color || DEFAULT_BRANDING.header_color);
   root.style.setProperty('--brand-radius', b.border_radius || DEFAULT_BRANDING.border_radius);
-
-  // Update dynamic document title if logged in
-  if (b.name && b.name !== 'NexVelt POS') {
-    if (!document.title.includes(b.name)) {
-      document.title = `${b.name} | POS`;
-    }
-  }
-
-  // Update dynamic favicon if available
-  if (b.favicon_url) {
-    const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-    if (faviconLink) {
-      faviconLink.href = b.favicon_url;
-    }
-  }
 }
