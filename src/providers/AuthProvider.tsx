@@ -3,9 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
 import { ROUTES } from '@/constants/routes';
+import { Loader2 } from 'lucide-react';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { setSession, setUser, setLoading } = useAuthStore();
+  const { isLoading, setSession, setUser, setLoading } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -91,6 +92,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, [navigate, location.pathname, setSession, setUser, setLoading]);
+
+  if (isLoading) {
+    return (
+      <div className="w-screen h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 select-none transform-gpu">
+        <div className="relative flex flex-col items-center justify-center p-8 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-xl max-w-sm w-full mx-4">
+          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 relative overflow-hidden">
+            <Loader2 className="w-8 h-8 animate-spin text-[#0AB190] duration-1000" />
+          </div>
+          <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 tracking-tight leading-none mb-1">NexVelt POS</h2>
+          <p className="text-xs font-bold text-[#0AB190] tracking-widest uppercase mb-4">Enterprise POS System</p>
+          <div className="text-[10px] font-semibold text-slate-400 animate-pulse">Restoring session...</div>
+        </div>
+      </div>
+    );
+  }
 
   return <>{children}</>;
 }
