@@ -1,6 +1,8 @@
 import { CartItem } from '@/types/order.types';
 import { printQueueService } from '@/services/printer.service';
 import { supabase } from '@/lib/supabase';
+import { useBrandingStore } from '@/stores/useBrandingStore';
+import { getRestaurantInitials } from '@/utils/imageSanitizer.utils';
 
 interface ReceiptData {
   restaurantName: string;
@@ -32,6 +34,19 @@ export function printReceipts(
   options: { kot?: boolean; bill?: boolean; customer?: boolean; restaurant?: boolean } = { kot: true, bill: true },
   printWindow?: Window | null,
 ) {
+  const branding = useBrandingStore.getState().branding;
+  const effectiveName = branding?.name || data.restaurantName || 'NexVelt POS';
+  const effectiveLogo = branding?.receipt_logo_url || branding?.logo_url || data.logoUrl || null;
+  const effectiveAddress = branding?.address || data.address || '';
+  const effectivePhone = branding?.phone || data.phone || '';
+  const effectiveEmail = branding?.email || data.email || '';
+  const effectiveGst = branding?.gst_number || data.gstNumber || '';
+  const initials = getRestaurantInitials(effectiveName);
+
+  const customerLogoHtml = effectiveLogo
+    ? `<img src="${effectiveLogo}" style="max-height: 48px; max-width: 120px; object-fit: contain; margin: 0 auto 5px auto; display: block;" onError="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" /><div style="display:none; font-size:14px; font-weight:bold; padding:4px 8px; border:1px solid #000; margin:0 auto 5px auto;">${initials}</div>`
+    : `<div style="display:inline-block; font-size:14px; font-weight:bold; padding:4px 8px; border:1px solid #000; margin:0 auto 5px auto;">${initials}</div>`;
+
   // Create a temporary print frame or styling
   const style = `
     @media print {
@@ -107,11 +122,12 @@ export function printReceipts(
   const customerHtml = `
     <div class="receipt-container page-break">
       <div class="center">
-        ${data.logoUrl ? `<img src="${data.logoUrl}" style="max-height: 40px; margin-bottom: 5px;" />` : ''}
-        <div class="bold" style="font-size: 16px;">${data.restaurantName}</div>
-        ${data.address ? `<div>${data.address}</div>` : ''}
-        ${data.phone ? `<div>Ph: ${data.phone}</div>` : ''}
-        ${data.gstNumber ? `<div>GSTIN: ${data.gstNumber}</div>` : ''}
+        ${customerLogoHtml}
+        <div class="bold" style="font-size: 16px;">${effectiveName}</div>
+        ${effectiveAddress ? `<div>${effectiveAddress}</div>` : ''}
+        ${effectivePhone ? `<div>Ph: ${effectivePhone}</div>` : ''}
+        ${effectiveEmail ? `<div>Email: ${effectiveEmail}</div>` : ''}
+        ${effectiveGst ? `<div>GSTIN: ${effectiveGst}</div>` : ''}
         ${data.isReprint ? '<div class="bold" style="margin-top: 4px; border: 1px solid #000; padding: 2px;">REPRINT COPY</div>' : ''}
       </div>
       <div class="separator"></div>
@@ -320,15 +336,24 @@ export async function unifiedPrintReceipt(params: UnifiedPrintParams) {
       userId,
     } = params;
 
+    const branding = useBrandingStore.getState().branding;
+    const effectiveLogo = branding?.receipt_logo_url || branding?.logo_url || restaurant?.logo_url || null;
+    const effectiveName = branding?.name || restaurant?.name || 'NexVelt POS';
+    const effectiveAddress = branding?.address || restaurant?.address || null;
+    const effectivePhone = branding?.phone || restaurant?.phone || null;
+    const effectiveEmail = branding?.email || restaurant?.email || null;
+    const effectiveGst = branding?.gst_number || restaurant?.gst_number || null;
+
     // Route to local print queue which checks health, failover, etc.
     printQueueService.addJob({
       type,
       data: {
-        restaurant_name: restaurant?.name || 'NexVelt POS',
-        restaurant_address: restaurant?.address || null,
-        restaurant_phone: restaurant?.phone || null,
-        restaurant_email: restaurant?.email || null,
-        gst_number: restaurant?.gst_number || null,
+        restaurant_name: effectiveName,
+        restaurant_logo_url: effectiveLogo,
+        restaurant_address: effectiveAddress,
+        restaurant_phone: effectivePhone,
+        restaurant_email: effectiveEmail,
+        gst_number: effectiveGst,
         bill_number: orderNumber,
         invoice_number: orderNumber,
         order_number: orderNumber,

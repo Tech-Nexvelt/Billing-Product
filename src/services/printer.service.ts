@@ -401,6 +401,14 @@ export class PrinterService extends BaseService {
   buildBillHtml(data: BillReceiptData, paperSize: '58mm' | '80mm', template: string): string {
     const width = paperSize === '58mm' ? '52mm' : '72mm';
     const sym = data.currency_symbol;
+    const logoUrl = data.restaurant_logo_url;
+    const name = data.restaurant_name || 'NexVelt POS';
+    const initials = name.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).join('').substring(0, 2).toUpperCase() || 'POS';
+
+    const logoHtml = logoUrl
+      ? `<img src="${logoUrl}" alt="Logo" style="max-height: 44px; max-width: 100%; object-fit: contain; margin: 0 auto 4px auto; display: block;" onError="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" /><div style="display:none; font-size:12px; font-weight:bold; padding:2px 6px; border:1px solid #000; margin:0 auto 4px auto;">${initials}</div>`
+      : `<div style="display:inline-block; font-size:12px; font-weight:bold; padding:2px 6px; border:1px solid #000; margin:0 auto 4px auto;">${initials}</div>`;
+
     return `<!DOCTYPE html><html><head><style>
       @media print { @page { margin: 2mm; size: ${paperSize}; } }
       body { font-family: monospace; font-size: 10px; width: ${width}; margin: 0; padding: 4px; }
@@ -411,9 +419,15 @@ export class PrinterService extends BaseService {
       h2 { margin: 0; font-size: 13px; }
       .double { border-top: 2px double #000; margin: 4px 0; }
     </style></head><body>
-      <div class="center bold"><h2>${data.restaurant_name}</h2></div>
-      ${data.restaurant_address ? `<div class="center">${data.restaurant_address}</div>` : ''}
-      ${data.gst_number ? `<div class="center">GSTIN: ${data.gst_number}</div>` : ''}
+      <div class="center">
+        ${logoHtml}
+        <h2 class="bold" style="margin-top: 2px;">${name}</h2>
+        ${data.restaurant_address ? `<div>${data.restaurant_address}</div>` : ''}
+        ${data.restaurant_phone ? `<div>Ph: ${data.restaurant_phone}</div>` : ''}
+        ${data.restaurant_email ? `<div>Email: ${data.restaurant_email}</div>` : ''}
+        ${data.gst_number ? `<div>GSTIN: ${data.gst_number}</div>` : ''}
+      </div>
+      <div class="separator"></div>
       ${template === 'restaurant' ? '<div class="center bold">RESTAURANT COPY</div>' : '<div class="center bold">CUSTOMER COPY</div>'}
       <div class="separator"></div>
       <div class="row"><span>Bill#: ${data.bill_number}</span><span>Date: ${data.date}</span></div>
