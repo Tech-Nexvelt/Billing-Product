@@ -38,7 +38,7 @@ export function LoginPage() {
       <div className="text-center">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-muted mb-4 overflow-hidden">
           <img 
-            src="/nexvelt-logo.svg" 
+            src="/nexvelt-logo.png" 
             alt="NexVelt Logo" 
             className="w-12 h-12 object-contain"
           />
