@@ -72,8 +72,8 @@ export class KdsService extends BaseService {
       await supabase.from('activity_logs').insert({
         restaurant_id: result.data.restaurant_id,
         action: `kds_${status}`,
-        entity_type: 'order',
-        entity_id: orderId,
+        resource_type: 'order',
+        resource_id: orderId,
         metadata: {
           status,
           timestamp: new Date().toISOString()

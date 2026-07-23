@@ -407,6 +407,7 @@ export async function unifiedPrintReceipt(params: UnifiedPrintParams) {
           quantity: i.quantity,
           unit_price: i.unit_price || 0,
           item_total: i.item_total || 0,
+          selected_variant_text: i.selected_variant_text || (i.variant_name ? `Variant: ${i.variant_name}` : null),
           special_notes: i.special_notes || i.specialInstructions || null
         })),
         subtotal,
@@ -499,8 +500,8 @@ async function logReceiptPrint(audit: {
         restaurant_id: audit.restaurantId,
         user_id: audit.printedBy || null,
         action: audit.isReprint ? 'receipt_reprinted' : 'receipt_printed',
-        entity_type: 'order',
-        entity_id: audit.orderId,
+        resource_type: 'order',
+        resource_id: audit.orderId,
         metadata: {
           receipt_type: audit.receiptType,
           receipt_number: audit.receiptNumber,

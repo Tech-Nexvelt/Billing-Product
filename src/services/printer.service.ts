@@ -312,8 +312,8 @@ export class PrinterService extends BaseService {
       await supabase.from('activity_logs').insert({
         restaurant_id: backupPrinter.restaurant_id,
         action: 'printer_switched',
-        entity_type: 'printer',
-        entity_id: backupPrinter.id,
+        resource_type: 'printer',
+        resource_id: backupPrinter.id,
         metadata: {
           original_printer_id: originalPrinterId,
           backup_printer_name: backupPrinter.name,

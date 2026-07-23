@@ -164,7 +164,7 @@ export function ReportsPage() {
           payment_method:payments(payment_method:payment_method_name),
           tables(table_number),
           users:users!created_by(full_name),
-          order_items(item_name, quantity, item_total, menu_items(category_id))
+          order_items(item_name, quantity, item_total, selected_variant_text, menu_items(category_id))
         `)
         .eq('restaurant_id', restId)
         .gte('created_at', `${fromDate}T00:00:00`)
@@ -191,7 +191,10 @@ export function ReportsPage() {
         
         // Items list
         const items = o.order_items || [];
-        const itemsSummary = items.map((i: any) => `${i.item_name} (x${i.quantity})`).join(', ');
+        const itemsSummary = items.map((i: any) => {
+          const varText = i.selected_variant_text ? ` [${i.selected_variant_text}]` : '';
+          return `${i.item_name}${varText} (x${i.quantity})`;
+        }).join(', ');
 
         return {
           id: o.id,

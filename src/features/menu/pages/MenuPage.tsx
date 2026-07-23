@@ -441,7 +441,12 @@ export function MenuPage() {
   const profitMargin = calculateProfitMargin(Number(sellingPrice), costPrice === '' ? null : Number(costPrice));
 
   const filteredItems = items.filter((item) => {
-    const matchesCategory = selectedCategoryId ? item.category_id === selectedCategoryId : true;
+    if ((item as any).parent_menu_item_id != null) return false;
+    const selectedCat = categories.find((c) => c.id === selectedCategoryId);
+    const matchesCategory = selectedCategoryId
+      ? item.category_id === selectedCategoryId ||
+        (selectedCat && (item as any).category_name?.toLowerCase() === selectedCat.name.toLowerCase())
+      : true;
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (item.sku && item.sku.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -527,7 +532,10 @@ export function MenuPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {categories.map((cat) => {
-                const catItemCount = items.filter(i => i.category_id === cat.id).length;
+                const catItemCount = items.filter(i => {
+                  if ((i as any).parent_menu_item_id != null) return false;
+                  return i.category_id === cat.id || ((i as any).category_name && (i as any).category_name.toLowerCase() === cat.name.toLowerCase());
+                }).length;
                 return (
                   <div 
                     key={cat.id} 

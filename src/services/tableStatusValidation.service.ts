@@ -159,8 +159,8 @@ export class TableStatusValidationService {
             restaurant_id: restaurantId,
             user_id: user.id,
             action: 'validation_failed',
-            entity_type: 'table',
-            entity_id: tableId,
+            resource_type: 'table',
+            resource_id: tableId,
             metadata: {
               requested_status: newStatus,
               reason: check.reason,
@@ -236,8 +236,8 @@ export class TableStatusValidationService {
             restaurant_id: restaurantId,
             user_id: user.id,
             action: 'validation_failed',
-            entity_type: 'table',
-            entity_id: tableId,
+            resource_type: 'table',
+            resource_id: tableId,
             metadata: {
               requested_status: newStatus,
               current_status: table.status,

@@ -28,7 +28,9 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
+  LogOut,
 } from 'lucide-react';
+import { ROUTES } from '@/constants/routes';
 import { useToast } from '@/hooks/use-toast';
 import { MenuItemWithTags, MenuItemWithVariantsAndModifiers } from '@/types/menu.types';
 import { CartItem } from '@/types/order.types';
@@ -70,7 +72,7 @@ const VirtualCard = memo(({ children }: { children: React.ReactNode }) => {
 });
 
 export function OrderPage() {
-  const { user } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const { restaurant, settings } = useRestaurant();
   const { items, categories, setItems, setCategories } = useMenuStore();
   const { tables, updateTable, setTables } = useTableStore();
@@ -80,6 +82,43 @@ export function OrderPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { setTopbarContent } = useTopbarContent();
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      logout();
+      navigate(ROUTES.LOGIN);
+      toast({ title: 'Logged out successfully' });
+    } catch (err: any) {
+      toast({
+        title: 'Logout failed',
+        description: err.message,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const safeLogActivity = async (action: string, resourceType: string, resourceId?: string | null, metadata?: any) => {
+    try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const validResId = resourceId && uuidRegex.test(resourceId) ? resourceId : null;
+      const validUserId = user?.id && uuidRegex.test(user.id) ? user.id : null;
+      const validRestId = user?.restaurant_id && uuidRegex.test(user.restaurant_id) ? user.restaurant_id : null;
+
+      if (!validRestId) return;
+
+      await supabase.from('activity_logs').insert({
+        restaurant_id: validRestId,
+        user_id: validUserId,
+        action,
+        resource_type: resourceType,
+        resource_id: validResId,
+        metadata: metadata || {}
+      });
+    } catch {
+      // Ignore activity log failures
+    }
+  };
 
   const selectedTableId = searchParams.get('table');
   const shouldResumeBill = searchParams.get('resumeBill') === 'true';
@@ -104,6 +143,7 @@ export function OrderPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [configuringProduct, setConfiguringProduct] = useState<MenuItemWithVariantsAndModifiers | null>(null);
   const [isConfiguratorOpen, setIsConfiguratorOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<CartItem | null>(null);
 
   // Keep activeOrderId in a ref so async handlers always read the current value
   // without stale closure problems (React state updates are async).
@@ -373,6 +413,14 @@ export function OrderPage() {
           <Button variant="outline" size="icon" className="h-10 w-10 rounded-xl" onClick={loadOrderScreenData} aria-label="Refresh order screen">
             <Loader2 className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="h-10 rounded-xl font-bold text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+          >
+            <LogOut className="w-4 h-4 mr-1.5" /> Logout
+          </Button>
         </div>
       ),
     });
@@ -406,12 +454,28 @@ export function OrderPage() {
 
   const fetchManagers = async () => {
     try {
-      const { data } = await supabase
+      let rawData: any[] | null = null;
+      const res1 = await supabase
         .from('users')
-        .select('id, email, full_name, role:roles(name)')
+        .select('id, full_name, role_id, roles(name)')
         .is('deleted_at', null);
 
-      const mList = (data || []).filter((u: any) => u.role?.name === 'Owner' || u.role?.name === 'Manager');
+      if (res1.error || !res1.data) {
+        const res2 = await supabase
+          .from('users')
+          .select('id, full_name, role_id')
+          .is('deleted_at', null);
+        rawData = res2.data as any[];
+      } else {
+        rawData = res1.data as any[];
+      }
+
+      const mList = (rawData || []).map((u: any) => ({
+        ...u,
+        email: `${u.full_name?.toLowerCase().replace(/\s+/g, '') || 'manager'}@store.com`,
+        role: u.roles || u.role
+      })).filter((u: any) => u.role?.name === 'Owner' || u.role?.name === 'Manager' || !u.role);
+
       setManagers(mList);
       if (mList.length > 0) setManagerEmail(mList[0].email);
     } catch (err) {
@@ -534,22 +598,33 @@ export function OrderPage() {
       .eq('id', selectedTableId);
   };
 
+  const CONFIGURABLE_CATEGORY_NAMES = useMemo(() => [
+    'cakes',
+    'veg pizza',
+    'non veg pizza',
+    'bread pizza',
+    'momos'
+  ], []);
+
+  const isConfigurableCategory = (item: MenuItemWithVariantsAndModifiers): boolean => {
+    const catName = categories.find((c) => c.id === item.category_id)?.name || (item as any).category_name || '';
+    const lowerCat = catName.toLowerCase().trim();
+    return CONFIGURABLE_CATEGORY_NAMES.includes(lowerCat) || Boolean((item as any).is_variant_parent) || Boolean(item.variants && item.variants.length > 0);
+  };
+
   const handleAddToCart = async (item: MenuItemWithVariantsAndModifiers) => {
     if (!selectedTableId) {
       toast({ title: 'Select Table', description: 'Assign a table first.', variant: 'destructive' });
       return;
     }
 
-    const hasVariants = item.variants && item.variants.length > 0;
-    const hasModifiers = item.modifier_groups && item.modifier_groups.length > 0;
-
-    if (hasVariants || hasModifiers) {
+    if (isConfigurableCategory(item)) {
       setConfiguringProduct(item);
       setIsConfiguratorOpen(true);
       return;
     }
 
-    // Default item add for products with no variants / modifiers
+    // Direct Add to Cart for all non-configurable categories (Burgers, Coffee, Tea, Bakery, Pastries, Sandwiches, Rice, Starters, etc.)
     const defaultCartItem: CartItem = {
       menu_item_id: item.id,
       item_name: item.name,
@@ -560,6 +635,8 @@ export function OrderPage() {
       item_total: item.selling_price,
       selected_modifiers: [],
       configuration_hash: computeCartItemHash(item.id, null, [], ''),
+      image_url: item.image_url || undefined,
+      is_veg: item.is_veg
     };
 
     await handleAddConfiguredCartItem(defaultCartItem);
@@ -606,7 +683,6 @@ export function OrderPage() {
 
     setCart(nextCart);
     setHasUnsavedChanges(true);
-    toast({ title: 'Added to cart', description: `${configuredItem.item_name} added.` });
 
     try {
       const orderId = await ensureOrder();
@@ -688,25 +764,23 @@ export function OrderPage() {
           if (dbId) {
             await supabase
               .from('order_items')
-              .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+              .update({ deleted_at: new Date().toISOString() })
               .eq('id', dbId);
           } else {
             await supabase
               .from('order_items')
-              .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+              .update({ deleted_at: new Date().toISOString() })
               .eq('order_id', orderId)
               .eq('menu_item_id', targetItem.menu_item_id)
               .is('deleted_at', null);
           }
 
-          await supabase.from('activity_logs').insert({
-            restaurant_id: user!.restaurant_id,
-            user_id: user!.id,
-            action: 'cart_item_deleted',
-            entity_type: 'order_item',
-            entity_id: dbId || targetItem.menu_item_id,
-            metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
-          });
+          await safeLogActivity(
+            'cart_item_deleted',
+            'order_item',
+            dbId || targetItem.menu_item_id,
+            { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user?.full_name || 'Cashier' }
+          );
         } else {
           if (dbId) {
             await supabase
@@ -743,62 +817,65 @@ export function OrderPage() {
     }
   };
 
-  const handleRemoveFromCart = async (itemId: string) => {
+  const handleRemoveFromCart = async (targetKey: string) => {
     const originalCart = [...cart];
-    const targetItem = cart.find((i) => i.menu_item_id === itemId);
+    const targetItem = cart.find(
+      (i) =>
+        i.configuration_hash === targetKey ||
+        i.db_id === targetKey ||
+        i.menu_item_id === targetKey
+    );
     if (!targetItem) return;
 
-    const nextCart = cart.filter((i) => i.menu_item_id !== itemId);
+    const targetHash = targetItem.configuration_hash || targetItem.db_id || targetItem.menu_item_id;
+    const nextCart = cart.filter(
+      (i) => (i.configuration_hash || i.db_id || i.menu_item_id) !== targetHash
+    );
     setCart(nextCart);
 
     try {
       const orderId = activeOrderIdRef.current;
-      const dbId = targetItem.db_id;   // stable DB row id from CartItem itself
+      const dbId = targetItem.db_id;
+      const itemId = targetItem.menu_item_id;
 
       if (orderId) {
-        // TARGETED SOFT-DELETE — delete by db_id or menu_item_id fallback
         if (dbId) {
           await supabase
             .from('order_items')
-            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
+            .update({ deleted_at: new Date().toISOString() })
             .eq('id', dbId);
+        } else {
+          await supabase
+            .from('order_items')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('order_id', orderId)
+            .eq('menu_item_id', itemId)
+            .is('deleted_at', null);
         }
-        
-        // Also ensure any non-deleted items matching menu_item_id for this order are soft deleted
-        await supabase
-          .from('order_items')
-          .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
-          .eq('order_id', orderId)
-          .eq('menu_item_id', itemId)
-          .is('deleted_at', null);
 
-        await supabase.from('activity_logs').insert({
-          restaurant_id: user!.restaurant_id,
-          user_id: user!.id,
-          action: 'cart_item_deleted',
-          entity_type: 'order_item',
-          entity_id: dbId || itemId,
-          metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
-        });
+        await safeLogActivity(
+          'cart_item_deleted',
+          'order_item',
+          dbId || itemId,
+          { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user?.full_name || 'Cashier' }
+        );
 
         if (nextCart.length === 0) {
           await supabase
             .from('orders')
-            .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id, status: 'cancelled' })
+            .update({ deleted_at: new Date().toISOString(), status: 'cancelled' })
             .eq('id', orderId);
           setActiveOrderId(null);
           activeOrderIdRef.current = null;
           await supabase.from('tables').update({ current_bill: 0 }).eq('id', selectedTableId!);
           const res = await tableService.updateTableStatusValidated(selectedTableId!, 'available', user!);
           if (res.data) updateTable(res.data);
-          await supabase.from('activity_logs').insert({
-            restaurant_id: user!.restaurant_id,
-            user_id: user!.id,
-            action: 'order_emptied',
-            entity_type: 'order',
-            entity_id: orderId,
-            metadata: { table_id: selectedTableId, cashier: user!.full_name || 'Cashier' }
-          });
+          await safeLogActivity(
+            'order_emptied',
+            'order',
+            orderId,
+            { table_id: selectedTableId, cashier: user?.full_name || 'Cashier' }
+          );
         } else {
           await updateOrderTotals(nextCart, orderId);
         }
@@ -902,20 +979,18 @@ export function OrderPage() {
       localStorage.setItem(`nexvelt_pos_kot_${orderId}`, JSON.stringify(updatedKotQtys));
 
       // Step 6: Log KOT activity
-      await supabase.from('activity_logs').insert({
-        restaurant_id: user!.restaurant_id,
-        user_id: user!.id,
-        action: 'kot_printed',
-        entity_type: 'order',
-        entity_id: orderId,
-        metadata: {
+      await safeLogActivity(
+        'kot_printed',
+        'order',
+        orderId,
+        {
           items_count: newItemsToPrint.length,
           items: newItemsToPrint.map(i => ({ name: i.item_name, qty: i.quantity })),
           kot_number: kotSeq || orderId.substring(0, 8).toUpperCase(),
-          cashier: user!.full_name || 'Cashier',
+          cashier: user?.full_name || 'Cashier',
           timestamp: new Date().toISOString(),
         }
-      });
+      );
 
       toast({ title: '✅ KOT Sent', description: `${newItemsToPrint.length} item(s) sent to kitchen.` });
     } catch (err: any) {
@@ -1021,8 +1096,7 @@ export function OrderPage() {
         await supabase
           .from('order_items')
           .update({
-            deleted_at: new Date().toISOString(),
-            deleted_by: user!.id
+            deleted_at: new Date().toISOString()
           })
           .eq('order_id', activeOrderId);
 
@@ -1129,18 +1203,16 @@ export function OrderPage() {
         if (updatedTable) {
           updateTable(updatedTable);
         }
-        await supabase.from('activity_logs').insert({
-          restaurant_id: user!.restaurant_id,
-          user_id: user!.id,
-          action: 'table_status_changed',
-          entity_type: 'table',
-          entity_id: selectedTableId,
-          metadata: {
+        await safeLogActivity(
+          'table_status_changed',
+          'table',
+          selectedTableId,
+          {
             previous_status: 'occupied',
             new_status: 'available',
-            user_name: user!.full_name || 'Cashier'
+            user_name: user?.full_name || 'Cashier'
           }
-        });
+        );
       } else {
         const res = await tableService.updateTableStatusValidated(selectedTableId, 'cleaning', user!);
         if (res.data) {
@@ -1374,18 +1446,16 @@ export function OrderPage() {
       if (voidErr) throw voidErr;
 
       // 3. Log event
-      await supabase.from('activity_logs').insert({
-        restaurant_id: user!.restaurant_id,
-        user_id: user!.id,
-        action: 'receipt_voided',
-        entity_type: 'order',
-        entity_id: voidOrderId,
-        metadata: {
+      await safeLogActivity(
+        'receipt_voided',
+        'order',
+        voidOrderId,
+        {
           void_reason: finalReason,
           void_approved_by_name: authRes.user.full_name,
           timestamp: new Date().toISOString()
         }
-      });
+      );
 
       toast({ title: 'Receipt Voided', description: 'Order void status logged successfully.' });
       setIsVoidAuthOpen(false);
@@ -1406,14 +1476,19 @@ export function OrderPage() {
 
   // Memoized Filtered Menu Items
   const filteredMenuItems = useMemo(() => {
+    const selectedCat = categories.find((c) => c.id === selectedCategoryId);
     return items.filter((item: MenuItemWithTags) => {
-      const matchesCategory = selectedCategoryId ? item.category_id === selectedCategoryId : true;
+      if ((item as any).parent_menu_item_id != null) return false;
+      const matchesCategory = selectedCategoryId
+        ? item.category_id === selectedCategoryId ||
+          (selectedCat && (item as any).category_name?.toLowerCase() === selectedCat.name.toLowerCase())
+        : true;
       const matchesSearch =
         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (item.sku && item.sku.toLowerCase().includes(searchQuery.toLowerCase()));
       return matchesCategory && matchesSearch;
     });
-  }, [items, selectedCategoryId, searchQuery]);
+  }, [items, selectedCategoryId, searchQuery, categories]);
 
   const totalPages = Math.max(1, Math.ceil(filteredMenuItems.length / ITEMS_PER_PAGE));
 
@@ -1470,7 +1545,10 @@ export function OrderPage() {
                 {/* Individual Category Buttons */}
                 {filteredCategories.map((category) => {
                   const isSelected = selectedCategoryId === category.id;
-                  const itemCount = items.filter(i => i.category_id === category.id).length;
+                  const itemCount = items.filter(i => {
+                    if ((i as any).parent_menu_item_id != null) return false;
+                    return i.category_id === category.id || ((i as any).category_name && (i as any).category_name.toLowerCase() === category.name.toLowerCase());
+                  }).length;
 
                   return (
                     <button
@@ -1544,15 +1622,30 @@ export function OrderPage() {
 
                             <div className="flex flex-col justify-between flex-1">
                               <div>
-                                <h4 className="font-bold text-xs text-foreground line-clamp-1 group-hover:text-primary transition-colors">
-                                  {item.name}
-                                </h4>
+                                <div className="flex items-center justify-between gap-1">
+                                  <h4 className="font-bold text-xs text-foreground line-clamp-1 group-hover:text-primary transition-colors">
+                                    {item.name}
+                                  </h4>
+                                  {isConfigurableCategory(item) && item.variants && item.variants.length > 0 && (
+                                    <Badge className="text-[9px] px-1.5 py-0 bg-primary/10 text-primary border-primary/20 shrink-0 font-extrabold">
+                                      {item.variants.length} Variants
+                                    </Badge>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
                                   {item.description || 'Fresh & delicious choice'}
                                 </p>
                               </div>
                               <div className="flex justify-between items-center mt-2.5">
-                                <span className="font-black text-sm text-foreground">{formatCurrency(item.selling_price)}</span>
+                                <div>
+                                  {isConfigurableCategory(item) && item.variants && item.variants.length > 0 ? (
+                                    <span className="font-black text-xs text-primary">
+                                      From {formatCurrency(Math.min(...item.variants.map(v => v.price_override ?? item.selling_price)))}
+                                    </span>
+                                  ) : (
+                                    <span className="font-black text-sm text-foreground">{formatCurrency(item.selling_price)}</span>
+                                  )}
+                                </div>
                                 {item.is_veg !== undefined && (
                                   <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
                                     {item.is_veg ? 'Veg' : 'Non-Veg'}
@@ -1657,47 +1750,75 @@ export function OrderPage() {
                     const itemKey = item.configuration_hash || item.db_id || item.menu_item_id;
 
                     return (
-                      <div key={itemKey} className="flex justify-between items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                        <div className="flex-1 min-w-0">
-                          <h5 className="font-bold text-xs text-slate-800 leading-snug">{item.item_name}</h5>
-                          {item.selected_variant_text && (
-                            <p className="text-[10px] text-teal-700 font-medium mt-0.5 leading-tight">
-                              {item.selected_variant_text}
-                            </p>
-                          )}
-                          {item.special_notes && (
-                            <p className="text-[10px] text-amber-700 italic mt-0.5">
-                              * Note: {item.special_notes}
-                            </p>
-                          )}
-                          <span className="text-[10px] text-muted-foreground font-semibold block mt-1">₹{item.unit_price} each</span>
+                      <div 
+                        key={itemKey} 
+                        className="p-3 rounded-2xl bg-card border border-border/80 shadow-xs space-y-2.5 transition-all hover:border-primary/40 group"
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-extrabold text-xs text-foreground leading-snug">{item.item_name}</h5>
+                            {item.selected_variant_text && (
+                              <p className="text-[10px] text-primary font-bold mt-0.5 leading-tight">
+                                {item.selected_variant_text}
+                              </p>
+                            )}
+                            {item.special_notes && (
+                              <p className="text-[10px] text-amber-600 dark:text-amber-400 italic mt-0.5">
+                                * Note: {item.special_notes}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="text-xs font-mono font-extrabold text-foreground block">
+                              {formatCurrency(item.item_total)}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground font-semibold">
+                              {formatCurrency(item.unit_price)} ea
+                            </span>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="w-6.5 h-6.5 rounded-lg border-slate-200"
-                            onClick={() => handleUpdateQuantity(itemKey, -1)}
-                          >
-                            <Minus className="w-3 h-3 text-slate-600" />
-                          </Button>
-                          <span className="text-xs font-extrabold w-4 text-center text-slate-800">{item.quantity}</span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="w-6.5 h-6.5 rounded-lg border-slate-200"
-                            onClick={() => handleUpdateQuantity(itemKey, 1)}
-                          >
-                            <Plus className="w-3 h-3 text-slate-600" />
-                          </Button>
+                        {/* ENTERPRISE TOUCH-FRIENDLY POS ACTION CONTROLS */}
+                        <div className="flex items-center justify-between border-t border-border/60 pt-2.5">
+                          {/* Stepper Quantity Controls */}
+                          <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg hover:bg-background text-foreground active:scale-95 transition-all shrink-0"
+                              onClick={() => {
+                                if (item.quantity === 1) {
+                                  setItemToDelete(item);
+                                } else {
+                                  handleUpdateQuantity(itemKey, -1);
+                                }
+                              }}
+                              aria-label="Decrease quantity"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                            </Button>
+                            <span className="font-mono text-sm font-black w-7 text-center text-foreground">{item.quantity}</span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg hover:bg-background text-foreground active:scale-95 transition-all shrink-0"
+                              onClick={() => handleUpdateQuantity(itemKey, 1)}
+                              aria-label="Increase quantity"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+
+                          {/* 40x40px Touch Target Delete Button with Tooltip & Confirmation */}
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="w-6.5 h-6.5 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
-                            onClick={() => handleRemoveFromCart(itemKey)}
+                            title="Remove Item"
+                            className="h-10 w-10 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 border border-rose-500/20 transition-all shadow-xs flex items-center justify-center shrink-0"
+                            onClick={() => setItemToDelete(item)}
+                            aria-label="Remove item"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4.5 h-4.5 stroke-[2.2]" />
                           </Button>
                         </div>
                       </div>
@@ -2021,6 +2142,44 @@ export function OrderPage() {
         product={configuringProduct}
         onAddToCart={handleAddConfiguredCartItem}
       />
+
+      {/* REMOVE ITEM CONFIRMATION DIALOG */}
+      <Dialog open={!!itemToDelete} onOpenChange={() => setItemToDelete(null)}>
+        <DialogContent className="sm:max-w-md rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-extrabold text-foreground flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-500" />
+              Remove Item from Cart?
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground mt-2">
+              Are you sure you want to remove <strong className="text-foreground">{itemToDelete?.item_name}</strong> {itemToDelete?.selected_variant_text ? `(${itemToDelete.selected_variant_text})` : ''} from the order cart?
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="mt-4 flex gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              className="rounded-xl font-bold"
+              onClick={() => setItemToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-md"
+              onClick={() => {
+                if (itemToDelete) {
+                  const itemKey = itemToDelete.configuration_hash || itemToDelete.db_id || itemToDelete.menu_item_id;
+                  handleRemoveFromCart(itemKey);
+                  setItemToDelete(null);
+                }
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Remove Item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
         </div>
     </CashierLayout>
   );

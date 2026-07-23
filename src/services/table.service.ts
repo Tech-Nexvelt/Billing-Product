@@ -71,7 +71,7 @@ export class TableService extends BaseService {
         .select()
         .single()
     );
-    if (result.data) await supabase.from('activity_logs').insert({ restaurant_id: user.restaurant_id, user_id: user.id, action: 'table_status_changed', entity_type: 'table', entity_id: id, metadata: { previous_status: previous, new_status: status, reason: reason || null, user_name: user.full_name || null } });
+    if (result.data) await supabase.from('activity_logs').insert({ restaurant_id: user.restaurant_id, user_id: user.id, action: 'table_status_changed', resource_type: 'table', resource_id: id, metadata: { previous_status: previous, new_status: status, reason: reason || null, user_name: user.full_name || null } });
     return result;
   }
 
@@ -137,8 +137,8 @@ export class TableService extends BaseService {
           restaurant_id: user.restaurant_id,
           user_id: user.id,
           action: 'table_status_changed',
-          entity_type: 'table',
-          entity_id: tableId,
+          resource_type: 'table',
+          resource_id: tableId,
           metadata: {
             previous_status: previousStatus,
             new_status: newStatus,
