@@ -141,7 +141,7 @@ export function Topbar({ onMenuToggle, content }: TopbarProps) {
 
   return (
     <>
-      <header className="flex min-h-16 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-card px-3 py-2 sm:px-4 md:px-6 shrink-0">
+      <header className="flex h-14 sm:h-16 flex-nowrap items-center gap-x-3 border-b border-border bg-card px-3 sm:px-4 md:px-6 shrink-0 overflow-hidden">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {/* Mobile menu trigger */}
           {onMenuToggle && (

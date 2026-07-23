@@ -11,17 +11,21 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const { user } = useAuthStore();
   const isKitchen = user?.role?.name === 'Kitchen';
+  const isCashier = user?.role?.name === 'Cashier';
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [topbarContent, setTopbarContent] = useState<TopbarContent | null>(null);
 
-  if (isKitchen) {
+  if (isKitchen || isCashier) {
     return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <main className="flex-1 overflow-auto p-0">
-          {children}
-        </main>
-      </div>
+      <TopbarContext.Provider value={{ setTopbarContent }}>
+        <div className="min-h-screen bg-background flex flex-col w-full">
+          <Topbar content={topbarContent} onMenuToggle={undefined} />
+          <main className="flex-1 flex flex-col min-w-0 p-0 w-full">
+            {children}
+          </main>
+        </div>
+      </TopbarContext.Provider>
     );
   }
 

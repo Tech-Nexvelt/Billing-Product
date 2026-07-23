@@ -1,5 +1,22 @@
 export type AvailabilityStatus = 'available' | 'out_of_stock' | 'hidden' | 'seasonal';
 
+export type SelectionType = 
+  | 'single' 
+  | 'multi' 
+  | 'dropdown' 
+  | 'quantity' 
+  | 'text' 
+  | 'textarea' 
+  | 'number' 
+  | 'toggle' 
+  | 'color' 
+  | 'date' 
+  | 'time'
+  | 'slider'
+  | 'rating';
+
+export type PriceType = 'fixed' | 'delta' | 'percentage' | 'free' | 'market';
+
 export interface Tag {
   id: string;
   restaurant_id: string | null;
@@ -25,6 +42,59 @@ export interface MenuCategory {
   deleted_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProductVariant {
+  id: string;
+  restaurant_id: string;
+  menu_item_id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  price_override?: number | null;
+  cost_price?: number | null;
+  stock_quantity?: number;
+  prep_time_override?: number | null;
+  kitchen_station_id?: string | null;
+  is_active: boolean;
+  display_order: number;
+}
+
+export interface ModifierOption {
+  id: string;
+  group_id: string;
+  restaurant_id: string;
+  name: string;
+  price_type: PriceType;
+  price_delta: number;
+  is_default: boolean;
+  max_quantity: number;
+  display_order: number;
+}
+
+export interface ModifierDependency {
+  id: string;
+  target_group_id: string;
+  target_option_id?: string | null;
+  depends_on_group_id: string;
+  depends_on_option_id?: string | null;
+  condition_type: 'equals' | 'not_equals' | 'greater_than' | 'contains';
+  action: 'show' | 'hide' | 'enable' | 'disable' | 'require' | 'auto_select' | 'reset';
+}
+
+export interface ModifierGroup {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  description?: string | null;
+  selection_type: SelectionType;
+  is_required: boolean;
+  min_selections: number;
+  max_selections: number | null;
+  is_template: boolean;
+  display_order: number;
+  options: ModifierOption[];
+  dependencies?: ModifierDependency[];
 }
 
 export interface MenuItem {
@@ -57,4 +127,8 @@ export interface MenuItem {
 
 export interface MenuItemWithTags extends MenuItem {
   tags: Tag[];
+  variants?: ProductVariant[];
+  modifier_groups?: ModifierGroup[];
 }
+
+export type MenuItemWithVariantsAndModifiers = MenuItemWithTags;

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, memo } from 'react';
+import { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
 import { useMenuStore } from '@/stores/menu.store';
@@ -20,17 +20,22 @@ import {
   Minus, 
   Trash2, 
   ArrowLeft,
+  ArrowRight,
   Sparkles,
-  TrendingUp,
   Printer,
   History,
   AlertTriangle,
+  Layers,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { MenuItemWithTags } from '@/types/menu.types';
+import { MenuItemWithTags, MenuItemWithVariantsAndModifiers } from '@/types/menu.types';
 import { CartItem } from '@/types/order.types';
 import { formatCurrency } from '@/utils/format';
 import { supabase } from '@/lib/supabase';
+import { ProductConfiguratorModal } from '@/components/shared/ProductConfiguratorModal';
+import { computeCartItemHash } from '@/engines/cartHash.engine';
 import { CheckoutDialog } from '../components/CheckoutDialog';
 import { unifiedPrintReceipt } from '@/services/print.service';
 import { managerAuthService } from '@/services/managerAuthorization.service';
@@ -42,6 +47,8 @@ import { MenuItemImage } from '@/components/shared/MenuItemImage';
 import { TableStatus } from '@/types/table.types';
 import { tableStatusValidationService } from '@/services/tableStatusValidation.service';
 import { TableStatusValidationDialog } from '@/components/shared/TableStatusValidationDialog';
+import { CashierLayout } from '@/layouts/CashierLayout';
+import { mergeCartItems } from '@/hooks/useCartLifecycle';
 
 const VirtualCard = memo(({ children }: { children: React.ReactNode }) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -78,16 +85,25 @@ export function OrderPage() {
   const shouldResumeBill = searchParams.get('resumeBill') === 'true';
 
   // Local Page State
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const ITEMS_PER_PAGE = 10;
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categorySearchQuery, setCategorySearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
+
+  // Automatically reset pagination to Page 1 when category or search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategoryId, searchQuery]);
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [configuringProduct, setConfiguringProduct] = useState<MenuItemWithVariantsAndModifiers | null>(null);
+  const [isConfiguratorOpen, setIsConfiguratorOpen] = useState(false);
 
   // Keep activeOrderId in a ref so async handlers always read the current value
   // without stale closure problems (React state updates are async).
@@ -141,10 +157,21 @@ export function OrderPage() {
     }
   }, [user?.restaurant_id]);
 
-  // Load / Restore active order or recovered local cart
+  const hasResumedSessionRef = useRef<Record<string, boolean>>({});
+  const [isOrderLoading, setIsOrderLoading] = useState<boolean>(false);
+
+  // Silent, single-execution, race-condition-free active order resume
   useEffect(() => {
     async function checkActiveOrder() {
       if (!selectedTableId || !user?.restaurant_id) return;
+
+      const sessionKey = `${selectedTableId}_${shouldResumeBill ? 'resume' : 'normal'}`;
+      if (hasResumedSessionRef.current[sessionKey]) {
+        return;
+      }
+
+      setIsOrderLoading(true);
+
       try {
         const { data: activeOrders, error } = await supabase
           .from('orders')
@@ -161,14 +188,21 @@ export function OrderPage() {
         if (activeOrders && activeOrders.length > 0) {
           const activeOrder = activeOrders[0];
           setActiveOrderId(activeOrder.id);
+          activeOrderIdRef.current = activeOrder.id;
           setSpecialInstructions(activeOrder.special_instructions || '');
 
-          // Load cart — consolidate non-deleted items by menu_item_id
-          const rawItems = activeOrder.order_items.filter((oi: any) => !oi.deleted_at);
+          // Load cart — consolidate non-deleted items
+          const rawItems = (activeOrder.order_items || []).filter((oi: any) => !oi.deleted_at);
           const itemMap = new Map<string, CartItem>();
 
           for (const oi of rawItems) {
-            const key = oi.menu_item_id || oi.id;
+            const hash = oi.configuration_hash || computeCartItemHash(
+              oi.menu_item_id || oi.id,
+              oi.variant_id,
+              oi.selected_modifiers || [],
+              oi.special_notes || ''
+            );
+            const key = hash || oi.id;
             const existingItem = itemMap.get(key);
             if (existingItem) {
               existingItem.quantity += oi.quantity;
@@ -177,20 +211,26 @@ export function OrderPage() {
               itemMap.set(key, {
                 db_id: oi.id,
                 menu_item_id: oi.menu_item_id,
+                variant_id: oi.variant_id || null,
                 item_name: oi.item_name,
                 category_name: oi.category_name || '',
                 unit_price: Number(oi.unit_price),
                 quantity: oi.quantity,
                 item_total: Number(oi.item_total),
+                selected_modifiers: oi.selected_modifiers || [],
+                selected_variant_text: oi.selected_variant_text || '',
                 special_notes: oi.special_notes || '',
+                configuration_hash: key,
               });
             }
           }
           const loadedCart: CartItem[] = Array.from(itemMap.values());
-          setCart(loadedCart);
+          
+          // Smart Merge with local cart additions to eliminate race conditions
+          setCart(currentCart => mergeCartItems(loadedCart, currentCart));
           setHasUnsavedChanges(false);
 
-          // Restore KOT-printed quantities for this order from localStorage
+          // Restore KOT-printed quantities
           try {
             const savedKot = localStorage.getItem(`nexvelt_pos_kot_${activeOrder.id}`);
             if (savedKot) setKotPrintedQtys(JSON.parse(savedKot));
@@ -198,28 +238,20 @@ export function OrderPage() {
           } catch (_) {
             setKotPrintedQtys({});
           }
-
-          toast({
-            title: shouldResumeBill ? 'Resumed Bill' : 'Resumed Order',
-            description: `Loaded order details for Table ${activeTable?.table_number || ''}`,
-          });
         } else {
-          // If no active order, check if we have a recovered cart state locally
+          // Check local draft fallback
           const cachedCart = localStorage.getItem(`nexvelt_pos_cart_${selectedTableId}`);
           const cachedNotes = localStorage.getItem(`nexvelt_pos_notes_${selectedTableId}`);
           if (cachedCart) {
-            setCart(JSON.parse(cachedCart));
+            const parsed = JSON.parse(cachedCart);
+            setCart(currentCart => mergeCartItems(parsed, currentCart));
             setSpecialInstructions(cachedNotes || '');
             setActiveOrderId(null);
             activeOrderIdRef.current = null;
             setKotPrintedQtys({});
             setHasUnsavedChanges(true);
-            toast({
-              title: 'Recovered Cart',
-              description: `Restored unsaved draft items for Table ${activeTable?.table_number || ''}`
-            });
           } else {
-            setCart([]);
+            setCart(currentCart => currentCart.length > 0 ? currentCart : []);
             setSpecialInstructions('');
             setActiveOrderId(null);
             activeOrderIdRef.current = null;
@@ -227,13 +259,17 @@ export function OrderPage() {
             setHasUnsavedChanges(false);
           }
         }
+
+        hasResumedSessionRef.current[sessionKey] = true;
       } catch (err) {
-        console.error('Error checking active order:', err);
+        console.error('Error checking active order silently:', err);
+      } finally {
+        setIsOrderLoading(false);
       }
     }
 
     checkActiveOrder();
-  }, [selectedTableId, shouldResumeBill, tables, user?.restaurant_id]);
+  }, [selectedTableId, shouldResumeBill, user?.restaurant_id]);
 
   // Persist unsaved changes locally for unexpected tab close recovery
   useEffect(() => {
@@ -498,71 +534,119 @@ export function OrderPage() {
       .eq('id', selectedTableId);
   };
 
-  const handleAddToCart = async (item: MenuItemWithTags) => {
+  const handleAddToCart = async (item: MenuItemWithVariantsAndModifiers) => {
     if (!selectedTableId) {
       toast({ title: 'Select Table', description: 'Assign a table first.', variant: 'destructive' });
       return;
     }
 
-    // Optimistic update — compute next cart before any async work
-    const existing = cart.find((i) => i.menu_item_id === item.id);
-    const nextCart: CartItem[] = existing
-      ? cart.map((i) =>
-          i.menu_item_id === item.id
-            ? { ...i, quantity: i.quantity + 1, item_total: (i.quantity + 1) * i.unit_price }
-            : i
-        )
-      : [
-          ...cart,
-          {
-            // db_id will be filled in after the INSERT returns
-            menu_item_id: item.id,
-            item_name: item.name,
-            category_name: categories.find((c) => c.id === item.category_id)?.name || '',
-            unit_price: item.selling_price,
-            quantity: 1,
-            item_total: item.selling_price,
-          },
-        ];
+    const hasVariants = item.variants && item.variants.length > 0;
+    const hasModifiers = item.modifier_groups && item.modifier_groups.length > 0;
+
+    if (hasVariants || hasModifiers) {
+      setConfiguringProduct(item);
+      setIsConfiguratorOpen(true);
+      return;
+    }
+
+    // Default item add for products with no variants / modifiers
+    const defaultCartItem: CartItem = {
+      menu_item_id: item.id,
+      item_name: item.name,
+      category_name: categories.find((c) => c.id === item.category_id)?.name || '',
+      base_unit_price: item.selling_price,
+      unit_price: item.selling_price,
+      quantity: 1,
+      item_total: item.selling_price,
+      selected_modifiers: [],
+      configuration_hash: computeCartItemHash(item.id, null, [], ''),
+    };
+
+    await handleAddConfiguredCartItem(defaultCartItem);
+  };
+
+  const handleAddConfiguredCartItem = async (configuredItem: CartItem) => {
+    if (!selectedTableId) {
+      toast({ title: 'Select Table', description: 'Assign a table first.', variant: 'destructive' });
+      return;
+    }
+
+    const hash = configuredItem.configuration_hash || computeCartItemHash(
+      configuredItem.menu_item_id,
+      configuredItem.variant_id,
+      configuredItem.selected_modifiers || [],
+      configuredItem.special_notes || ''
+    );
+
+    const existingIndex = cart.findIndex((i) => 
+      i.configuration_hash === hash || 
+      (i.menu_item_id === configuredItem.menu_item_id && !i.selected_modifiers?.length && !configuredItem.selected_modifiers?.length && !i.variant_id && !configuredItem.variant_id)
+    );
+
+    let nextCart: CartItem[];
+    let targetCartItem: CartItem;
+
+    if (existingIndex >= 0) {
+      const existing = cart[existingIndex];
+      const newQty = existing.quantity + configuredItem.quantity;
+      targetCartItem = {
+        ...existing,
+        quantity: newQty,
+        item_total: newQty * existing.unit_price,
+      };
+      nextCart = [...cart];
+      nextCart[existingIndex] = targetCartItem;
+    } else {
+      targetCartItem = {
+        ...configuredItem,
+        configuration_hash: hash,
+      };
+      nextCart = [...cart, targetCartItem];
+    }
 
     setCart(nextCart);
-    toast({ title: 'Added to cart', description: `${item.name} has been added.` });
+    setHasUnsavedChanges(true);
+    toast({ title: 'Added to cart', description: `${configuredItem.item_name} added.` });
 
     try {
       const orderId = await ensureOrder();
       if (!orderId) return;
 
-      if (existing?.db_id) {
-        // TARGETED UPDATE — only this row by its stable DB id
-        const newQty = existing.quantity + 1;
+      if (targetCartItem.db_id) {
         await supabase
           .from('order_items')
-          .update({ quantity: newQty, item_total: newQty * item.selling_price })
-          .eq('id', existing.db_id);
-        // db_id unchanged — already set on the CartItem
+          .update({
+            quantity: targetCartItem.quantity,
+            item_total: targetCartItem.item_total,
+            selected_modifiers: targetCartItem.selected_modifiers || [],
+            special_notes: targetCartItem.special_notes || null,
+          })
+          .eq('id', targetCartItem.db_id);
       } else {
-        // TARGETED INSERT — one new row, capture the returned DB id
         const { data: inserted, error: insErr } = await supabase
           .from('order_items')
           .insert({
             order_id: orderId,
-            menu_item_id: item.id,
+            menu_item_id: targetCartItem.menu_item_id,
+            variant_id: targetCartItem.variant_id || null,
             restaurant_id: user!.restaurant_id,
-            item_name: item.name,
-            category_name: categories.find((c) => c.id === item.category_id)?.name || null,
-            unit_price: item.selling_price,
-            quantity: 1,
-            item_total: item.selling_price,
+            item_name: targetCartItem.item_name,
+            category_name: categories.find((c) => c.id === targetCartItem.menu_item_id)?.name || null,
+            unit_price: targetCartItem.unit_price,
+            quantity: targetCartItem.quantity,
+            item_total: targetCartItem.item_total,
+            selected_modifiers: targetCartItem.selected_modifiers || [],
+            special_notes: targetCartItem.special_notes || null,
+            configuration_hash: hash,
           })
           .select('id')
           .single();
 
         if (insErr) throw insErr;
-        // Stamp the db_id onto the cart item so future ops use it
         if (inserted) {
           setCart((prev) =>
             prev.map((ci) =>
-              ci.menu_item_id === item.id && !ci.db_id
+              (ci.configuration_hash === hash && !ci.db_id)
                 ? { ...ci, db_id: inserted.id }
                 : ci
             )
@@ -577,17 +661,18 @@ export function OrderPage() {
     }
   };
 
-  const handleUpdateQuantity = async (itemId: string, delta: number) => {
+  const handleUpdateQuantity = async (targetKey: string, delta: number) => {
     const originalCart = [...cart];
-    const targetItem = cart.find((i) => i.menu_item_id === itemId);
+    const targetItem = cart.find((i) => i.configuration_hash === targetKey || i.menu_item_id === targetKey || i.db_id === targetKey);
     if (!targetItem) return;
 
+    const targetHash = targetItem.configuration_hash || targetItem.menu_item_id;
     const nextQty = targetItem.quantity + delta;
     const nextCart =
       nextQty <= 0
-        ? cart.filter((i) => i.menu_item_id !== itemId)
+        ? cart.filter((i) => (i.configuration_hash || i.menu_item_id) !== targetHash)
         : cart.map((i) =>
-            i.menu_item_id === itemId
+            (i.configuration_hash || i.menu_item_id) === targetHash
               ? { ...i, quantity: nextQty, item_total: nextQty * i.unit_price }
               : i
           );
@@ -596,11 +681,10 @@ export function OrderPage() {
 
     try {
       const orderId = activeOrderIdRef.current;
-      const dbId = targetItem.db_id;   // stable DB row id from CartItem itself
+      const dbId = targetItem.db_id;
 
       if (orderId) {
         if (nextQty <= 0) {
-          // TARGETED SOFT-DELETE — delete by db_id or menu_item_id fallback
           if (dbId) {
             await supabase
               .from('order_items')
@@ -611,7 +695,7 @@ export function OrderPage() {
               .from('order_items')
               .update({ deleted_at: new Date().toISOString(), deleted_by: user!.id })
               .eq('order_id', orderId)
-              .eq('menu_item_id', itemId)
+              .eq('menu_item_id', targetItem.menu_item_id)
               .is('deleted_at', null);
           }
 
@@ -620,11 +704,10 @@ export function OrderPage() {
             user_id: user!.id,
             action: 'cart_item_deleted',
             entity_type: 'order_item',
-            entity_id: dbId || itemId,
+            entity_id: dbId || targetItem.menu_item_id,
             metadata: { order_id: orderId, item_name: targetItem.item_name, quantity: targetItem.quantity, cashier: user!.full_name || 'Cashier' }
           });
         } else {
-          // TARGETED UPDATE — update by db_id or menu_item_id fallback
           if (dbId) {
             await supabase
               .from('order_items')
@@ -635,7 +718,7 @@ export function OrderPage() {
               .from('order_items')
               .update({ quantity: nextQty, item_total: nextQty * targetItem.unit_price })
               .eq('order_id', orderId)
-              .eq('menu_item_id', itemId)
+              .eq('menu_item_id', targetItem.menu_item_id)
               .is('deleted_at', null);
           }
         }
@@ -1307,7 +1390,6 @@ export function OrderPage() {
       toast({ title: 'Receipt Voided', description: 'Order void status logged successfully.' });
       setIsVoidAuthOpen(false);
       setManagerPassword('');
-      fetchPrintHistory();
     } catch (err: any) {
       toast({ title: 'Void Authorization Failed', description: err.message, variant: 'destructive' });
     } finally {
@@ -1316,258 +1398,386 @@ export function OrderPage() {
   };
 
   // Filter Categories
-  const filteredCategories = categories.filter((c) =>
-    c.name.toLowerCase().includes(categorySearchQuery.toLowerCase())
-  );
+  const filteredCategories = useMemo(() => {
+    return categories.filter((c) =>
+      c.name.toLowerCase().includes(categorySearchQuery.toLowerCase())
+    );
+  }, [categories, categorySearchQuery]);
 
-  // Filter Menu Items
-  const filteredMenuItems = items.filter((item: MenuItemWithTags) => {
-    const matchesCategory = selectedCategoryId ? item.category_id === selectedCategoryId : true;
-    const matchesSearch =
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.sku && item.sku.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesCategory && matchesSearch;
-  });
+  // Memoized Filtered Menu Items
+  const filteredMenuItems = useMemo(() => {
+    return items.filter((item: MenuItemWithTags) => {
+      const matchesCategory = selectedCategoryId ? item.category_id === selectedCategoryId : true;
+      const matchesSearch =
+        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.sku && item.sku.toLowerCase().includes(searchQuery.toLowerCase()));
+      return matchesCategory && matchesSearch;
+    });
+  }, [items, selectedCategoryId, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredMenuItems.length / ITEMS_PER_PAGE));
+
+  // Memoized Paginated Slices for current page (Max 10 products per page)
+  const paginatedMenuItems = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredMenuItems.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredMenuItems, currentPage, ITEMS_PER_PAGE]);
 
   return (
-    <div className="min-h-[calc(100vh-6rem)] lg:h-[calc(100vh-6rem)] flex flex-col space-y-4 pb-20 lg:pb-0">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 flex-1 overflow-visible lg:overflow-hidden">
-        
-        {/* LEFT COLUMN: Categories */}
-        <div className="col-span-12 lg:col-span-2 bg-card border border-border rounded-2xl flex flex-col overflow-hidden p-4 space-y-3.5 shrink-0">
-          <div className="space-y-1.5 shrink-0">
-            <Label className="text-xs font-bold text-muted-foreground uppercase">Categories</Label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Search cats..."
-                className="pl-8 text-xs h-8 animate-all"
-                value={categorySearchQuery}
-                onChange={(e) => setCategorySearchQuery(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-row lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto pr-1 pb-2 lg:pb-0 scrollbar-hide">
-            {filteredCategories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setSelectedCategoryId(c.id)}
-                className={`px-4 py-2.5 lg:px-3 lg:py-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 lg:w-full lg:text-left ${
-                  selectedCategoryId === c.id
-                    ? 'bg-primary text-white shadow-sm'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* CENTER COLUMN: Menu Items */}
-        <div className="col-span-12 lg:col-span-6 flex flex-col overflow-visible lg:overflow-hidden">
-          <div className="flex-1 overflow-y-auto pr-1">
-            {isLoading ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                {Array.from({ length: 9 }).map((_, i) => (
-                  <div key={i} className="aspect-[4/3] bg-muted/30 rounded-2xl animate-pulse" />
-                ))}
+    <CashierLayout>
+        <div className="p-3 sm:p-4 flex-1 flex flex-col min-h-0 overflow-hidden w-full">
+          <div className="flex flex-row items-stretch gap-3.5 flex-1 w-full overflow-hidden h-full min-h-0">
+            
+            {/* LEFT COLUMN: Product Category Panel (Dedicated 220-260px Billing Category Menu) */}
+            <div className="w-56 lg:w-60 xl:w-64 bg-card border border-border rounded-2xl flex flex-col overflow-hidden p-3.5 space-y-3 shrink-0 shadow-sm h-full min-h-0">
+              <div className="space-y-1.5 shrink-0">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Categories</Label>
+                  <Badge variant="outline" className="text-[10px] font-mono font-bold">{categories.length}</Badge>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search category..."
+                    className="pl-8 text-xs h-8.5 rounded-xl"
+                    value={categorySearchQuery}
+                    onChange={(e) => setCategorySearchQuery(e.target.value)}
+                  />
+                </div>
               </div>
-            ) : filteredMenuItems.length === 0 ? (
-              <div className="text-center py-20 bg-card rounded-2xl border border-border">
-                <p className="text-muted-foreground text-sm font-semibold">No items in this category</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 pb-4">
-                {filteredMenuItems.map((item: MenuItemWithTags) => {
-                  const isAvailable = item.availability_status === 'available';
-                  const isPopular = item.selling_price < 200;
-                  const isChef = item.selling_price > 400;
+
+              <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 scrollbar-thin">
+                {/* All Items Button */}
+                <button
+                  onClick={() => setSelectedCategoryId(null)}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all text-left border ${
+                    selectedCategoryId === null
+                      ? 'bg-primary text-white border-primary shadow-sm'
+                      : 'bg-background hover:bg-muted text-foreground border-border'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>All Items</span>
+                  </div>
+                  <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold ${
+                    selectedCategoryId === null ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {items.length}
+                  </span>
+                </button>
+
+                {/* Individual Category Buttons */}
+                {filteredCategories.map((category) => {
+                  const isSelected = selectedCategoryId === category.id;
+                  const itemCount = items.filter(i => i.category_id === category.id).length;
 
                   return (
-                    <VirtualCard key={item.id}>
-                      <div
-                        onClick={() => isAvailable && handleAddToCart(item)}
-                        className={`bg-card rounded-2xl border border-border overflow-hidden p-3 shadow-sm hover:shadow-md cursor-pointer transition-all duration-300 flex flex-col justify-between relative group h-full ${
-                          !isAvailable ? 'opacity-40 cursor-not-allowed pointer-events-none bg-slate-100' : ''
-                        }`}
-                      >
-                        <div className="relative aspect-square bg-slate-100 rounded-xl overflow-hidden mb-2.5">
-                          <MenuItemImage 
-                            src={item.image_url} 
-                            alt={item.name} 
-                            availabilityStatus={item.availability_status} 
-                          />
-                          <div className="absolute top-2 left-2 bg-white/90 backdrop-blur p-1 rounded-md border border-border flex items-center justify-center z-10">
-                            <span className={`w-2.5 h-2.5 rounded-full border border-white ${
-                              item.is_veg ? 'bg-emerald-500' : 'bg-rose-500'
-                            }`} />
-                          </div>
-
-                          <div className="absolute top-2 right-2 flex flex-col gap-1">
-                            {isChef && (
-                              <span className="bg-amber-500 text-white text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-sm">
-                                <Sparkles className="w-2.5 h-2.5" /> Chef
-                              </span>
-                            )}
-                            {isPopular && (
-                              <span className="bg-[#0AB190] text-white text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-sm">
-                                <TrendingUp className="w-2.5 h-2.5" /> Popular
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex-1 flex flex-col justify-between">
-                          <h4 className="font-extrabold text-xs text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug">
-                            {item.name}
-                          </h4>
-                          <div className="flex justify-between items-center mt-2.5">
-                            <span className="font-black text-sm text-foreground">{formatCurrency(item.selling_price)}</span>
-                            {item.is_veg !== undefined && (
-                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                                {item.is_veg ? 'Veg' : 'Non-Veg'}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </VirtualCard>
+                    <button
+                      key={category.id}
+                      onClick={() => setSelectedCategoryId(category.id)}
+                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all text-left border ${
+                        isSelected
+                          ? 'bg-primary text-white border-primary shadow-sm'
+                          : 'bg-background hover:bg-muted text-foreground border-border'
+                      }`}
+                      style={isSelected && category.color ? {
+                        backgroundColor: category.color,
+                        borderColor: category.color,
+                        boxShadow: `0 4px 12px ${category.color}35`
+                      } : undefined}
+                    >
+                      <span className="truncate">{category.name}</span>
+                      <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold shrink-0 ml-1 ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {itemCount}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: Bill Cart */}
-        <div className="col-span-12 lg:col-span-4 bg-card border border-border rounded-2xl flex flex-col overflow-hidden">
-          <div className="p-4 border-b border-border flex items-center justify-between shrink-0 bg-slate-50/50">
-            <div className="flex items-center gap-2">
-              <ShoppingCart className="w-5 h-5 text-primary" />
-              <span className="font-extrabold text-sm text-foreground">Current Cart</span>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleHoldClick} disabled={cart.length === 0 || isPlacingOrder} className="font-bold text-xs h-8">
-                Hold Bill
-              </Button>
-              <Button variant="ghost" size="icon" onClick={handleCancelOrderClick} disabled={cart.length === 0 || isPlacingOrder} className="w-8 h-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {cart.length === 0 ? (
-              <div className="text-center py-24 text-muted-foreground space-y-3">
-                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto">
-                  <ShoppingCart className="w-6 h-6 text-slate-400 opacity-60" />
+            {/* CENTER COLUMN: Product Grid with Enterprise Pagination */}
+            <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+              <div className="flex-1 overflow-y-auto pr-1">
+                {isLoading ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} className="aspect-[4/3] bg-muted/30 rounded-2xl animate-pulse" />
+                    ))}
+                  </div>
+                ) : filteredMenuItems.length === 0 ? (
+                  <div className="text-center py-20 bg-card rounded-2xl border border-border">
+                    <p className="text-muted-foreground text-sm font-semibold">
+                      {searchQuery
+                        ? `No matching products found for "${searchQuery}"`
+                        : 'No products available in this category.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5 pb-4">
+                    {paginatedMenuItems.map((item: MenuItemWithTags) => {
+                      const isAvailable = item.availability_status === 'available';
+
+                      return (
+                        <VirtualCard key={item.id}>
+                          <div
+                            onClick={() => isAvailable && handleAddToCart(item)}
+                            className={`bg-card rounded-2xl border border-border overflow-hidden p-3 shadow-sm hover:shadow-md cursor-pointer transition-all duration-300 flex flex-col justify-between relative group h-full ${
+                              !isAvailable ? 'opacity-40 cursor-not-allowed pointer-events-none bg-slate-100' : ''
+                            }`}
+                          >
+                            <div className="relative aspect-square bg-slate-100 rounded-xl overflow-hidden mb-2.5">
+                              <MenuItemImage 
+                                src={item.image_url} 
+                                alt={item.name} 
+                                availabilityStatus={item.availability_status} 
+                              />
+                              <div className="absolute top-2 left-2 bg-white/90 backdrop-blur p-1 rounded-md border border-border flex items-center justify-center z-10">
+                                <span className={`w-2.5 h-2.5 rounded-full border border-white ${
+                                  item.is_veg ? 'bg-emerald-500' : 'bg-rose-500'
+                                }`} />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col justify-between flex-1">
+                              <div>
+                                <h4 className="font-bold text-xs text-foreground line-clamp-1 group-hover:text-primary transition-colors">
+                                  {item.name}
+                                </h4>
+                                <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
+                                  {item.description || 'Fresh & delicious choice'}
+                                </p>
+                              </div>
+                              <div className="flex justify-between items-center mt-2.5">
+                                <span className="font-black text-sm text-foreground">{formatCurrency(item.selling_price)}</span>
+                                {item.is_veg !== undefined && (
+                                  <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                                    {item.is_veg ? 'Veg' : 'Non-Veg'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </VirtualCard>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* PAGINATION CONTROLS BAR */}
+              {!isLoading && filteredMenuItems.length > 0 && (
+                <div className="flex items-center justify-between pt-3 border-t border-border mt-auto shrink-0 bg-card px-3 py-2.5 rounded-2xl shadow-sm">
+                  <div className="text-xs text-muted-foreground font-medium">
+                    Showing <span className="font-bold text-foreground">{Math.min(filteredMenuItems.length, (currentPage - 1) * ITEMS_PER_PAGE + 1)}–{Math.min(filteredMenuItems.length, currentPage * ITEMS_PER_PAGE)}</span> of <span className="font-bold text-foreground">{filteredMenuItems.length}</span> products
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      className="h-8 px-2.5 text-xs font-bold rounded-xl"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Previous
+                    </Button>
+
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`w-7 h-7 rounded-xl text-xs font-extrabold transition-all border ${
+                            currentPage === page
+                              ? 'bg-primary text-white border-primary shadow-sm'
+                              : 'bg-background hover:bg-muted text-muted-foreground border-border'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      className="h-8 px-2.5 text-xs font-bold rounded-xl"
+                    >
+                      Next <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                    </Button>
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {/* RIGHT COLUMN: Bill Cart Panel (Full-Height Fixed Footer Architecture) */}
+            <div className="w-80 lg:w-88 xl:w-96 bg-card border border-border rounded-2xl flex flex-col overflow-hidden shadow-sm h-full max-h-full min-h-0 shrink-0">
+              {/* Cart Header */}
+              <div className="p-3.5 border-b border-border flex items-center justify-between shrink-0 bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <ShoppingCart className="w-5 h-5 text-primary" />
+                  <span className="font-extrabold text-sm text-foreground">Current Cart</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={handleHoldClick} disabled={cart.length === 0 || isPlacingOrder} className="font-bold text-xs h-8">
+                    Hold Bill
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={handleCancelOrderClick} disabled={cart.length === 0 || isPlacingOrder} className="w-8 h-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Scrollable Cart Items Container */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0 scrollbar-thin">
+                {isOrderLoading ? (
+                  <div className="space-y-2.5">
+                    <div className="h-14 bg-muted/40 rounded-xl animate-pulse" />
+                    <div className="h-14 bg-muted/40 rounded-xl animate-pulse" />
+                    <div className="h-14 bg-muted/40 rounded-xl animate-pulse" />
+                  </div>
+                ) : cart.length === 0 ? (
+                  <div className="text-center py-20 text-muted-foreground space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto">
+                      <ShoppingCart className="w-6 h-6 text-slate-400 opacity-60" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-slate-600">Your billing cart is empty</p>
+                      <p className="text-[11px] text-muted-foreground">Select dishes from the menu to populate invoice</p>
+                    </div>
+                  </div>
+                ) : (
+                  cart.map((item: CartItem) => {
+                    const itemKey = item.configuration_hash || item.db_id || item.menu_item_id;
+
+                    return (
+                      <div key={itemKey} className="flex justify-between items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <div className="flex-1 min-w-0">
+                          <h5 className="font-bold text-xs text-slate-800 leading-snug">{item.item_name}</h5>
+                          {item.selected_variant_text && (
+                            <p className="text-[10px] text-teal-700 font-medium mt-0.5 leading-tight">
+                              {item.selected_variant_text}
+                            </p>
+                          )}
+                          {item.special_notes && (
+                            <p className="text-[10px] text-amber-700 italic mt-0.5">
+                              * Note: {item.special_notes}
+                            </p>
+                          )}
+                          <span className="text-[10px] text-muted-foreground font-semibold block mt-1">₹{item.unit_price} each</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="w-6.5 h-6.5 rounded-lg border-slate-200"
+                            onClick={() => handleUpdateQuantity(itemKey, -1)}
+                          >
+                            <Minus className="w-3 h-3 text-slate-600" />
+                          </Button>
+                          <span className="text-xs font-extrabold w-4 text-center text-slate-800">{item.quantity}</span>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="w-6.5 h-6.5 rounded-lg border-slate-200"
+                            onClick={() => handleUpdateQuantity(itemKey, 1)}
+                          >
+                            <Plus className="w-3 h-3 text-slate-600" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-6.5 h-6.5 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                            onClick={() => handleRemoveFromCart(itemKey)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Permanently Fixed Footer Container */}
+              <div className="p-3.5 border-t border-border space-y-3 shrink-0 bg-card shadow-inner mt-auto">
+                {/* Kitchen Instructions */}
                 <div className="space-y-1">
-                  <p className="text-xs font-bold text-slate-600">Your billing cart is empty</p>
-                  <p className="text-[11px] text-muted-foreground">Select dishes from the menu to populate invoice</p>
+                  <Label htmlFor="specialInstructions" className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">Kitchen Instructions / Notes</Label>
+                  <Input
+                    id="specialInstructions"
+                    placeholder="e.g. Medium spicy, no onions"
+                    value={specialInstructions}
+                    onChange={(e) => {
+                      setSpecialInstructions(e.target.value);
+                      setHasUnsavedChanges(true);
+                    }}
+                    className="text-xs rounded-xl h-8 bg-slate-50/50"
+                  />
                 </div>
-              </div>
-            ) : (
-              cart.map((item: CartItem) => (
-                <div key={item.menu_item_id} className="flex justify-between items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="flex-1 min-w-0">
-                    <h5 className="font-bold text-xs text-slate-800 truncate leading-snug">{item.item_name}</h5>
-                    <span className="text-[10px] text-muted-foreground font-semibold">₹{item.unit_price} each</span>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="w-7 h-7 rounded-lg border-slate-200"
-                      onClick={() => handleUpdateQuantity(item.menu_item_id, -1)}
-                    >
-                      <Minus className="w-3 h-3 text-slate-600" />
-                    </Button>
-                    <span className="text-xs font-extrabold w-4 text-center text-slate-800">{item.quantity}</span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="w-7 h-7 rounded-lg border-slate-200"
-                      onClick={() => handleUpdateQuantity(item.menu_item_id, 1)}
-                    >
-                      <Plus className="w-3 h-3 text-slate-600" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
-                      onClick={() => handleRemoveFromCart(item.menu_item_id)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                {/* Totals Section */}
+                <div className="space-y-1.5 text-xs border-t border-border/60 pt-2.5">
+                  <div className="flex justify-between text-muted-foreground font-medium">
+                    <span>Subtotal</span>
+                    <span className="font-bold text-slate-800">{formatCurrency(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground font-medium">
+                    <span>GST Tax ({taxRate}%)</span>
+                    <span className="font-bold text-slate-800">{formatCurrency(taxAmount)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-border/80 pt-2 text-sm text-foreground font-extrabold">
+                    <span>Total Due</span>
+                    <span className="text-[#0AB190] text-base font-black">{formatCurrency(grandTotal)}</span>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
 
-          <div className="p-4 border-t border-border space-y-4 shrink-0 bg-slate-50/50">
-            <div className="space-y-1.5">
-              <Label htmlFor="specialInstructions" className="text-[11px] font-bold text-muted-foreground uppercase">Kitchen Instructions / Notes</Label>
-              <Input
-                id="specialInstructions"
-                placeholder="e.g. Medium spicy, no onions"
-                value={specialInstructions}
-                onChange={(e) => {
-                  setSpecialInstructions(e.target.value);
-                  setHasUnsavedChanges(true);
-                }}
-                className="text-xs rounded-xl h-9"
-              />
-            </div>
+                {/* 3 Receipt Action Buttons */}
+                <div className="grid grid-cols-3 gap-1.5 w-full">
+                  <Button
+                    variant="outline"
+                    className="font-extrabold text-[9.5px] sm:text-[10px] tracking-wider uppercase h-9 px-1 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1 truncate"
+                    disabled={isPlacingOrder || cart.length === 0 || !selectedTableId}
+                    onClick={handleCustomerReceiptClick}
+                  >
+                    <Printer className="w-3 h-3 shrink-0" /> <span className="truncate">Customer Receipt</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="font-extrabold text-[9.5px] sm:text-[10px] tracking-wider uppercase h-9 px-1 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1 truncate"
+                    disabled={isPlacingOrder || cart.length === 0 || !selectedTableId}
+                    onClick={handlePrintKotClick}
+                  >
+                    <Printer className="w-3 h-3 shrink-0" /> <span className="truncate">Print KOT</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="font-extrabold text-[9.5px] sm:text-[10px] tracking-wider uppercase h-9 px-1 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1 truncate"
+                    disabled={isPlacingOrder || cart.length === 0 || !activeOrderId}
+                    onClick={handleOwnerCopyClick}
+                  >
+                    <Printer className="w-3 h-3 shrink-0" /> <span className="truncate">Owner Copy</span>
+                  </Button>
+                </div>
 
-            <div className="space-y-2 text-xs border-t border-slate-200/60 pt-3">
-              <div className="flex justify-between text-muted-foreground font-medium">
-                <span>Subtotal</span>
-                <span className="font-bold text-slate-800">{formatCurrency(subtotal)}</span>
-              </div>
-              <div className="flex justify-between text-muted-foreground font-medium">
-                <span>GST Tax ({taxRate}%)</span>
-                <span className="font-bold text-slate-800">{formatCurrency(taxAmount)}</span>
-              </div>
-              <div className="flex justify-between border-t pt-2 text-sm text-foreground font-bold">
-                <span>Total Due</span>
-                <span className="text-primary text-base font-extrabold">{formatCurrency(grandTotal)}</span>
+                {/* Proceed to Payment Action Button */}
+                <Button
+                  className="w-full h-11 bg-[#0AB190] hover:bg-[#057B62] text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 shrink-0 transition-transform active:scale-[0.99]"
+                  disabled={isPlacingOrder || cart.length === 0 || !selectedTableId}
+                  onClick={() => setIsCheckoutOpen(true)}
+                >
+                  <span>Proceed to Payment</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
               </div>
             </div>
-
-            {/* Pay / Receipt Actions Panel */}
-            <div className="flex gap-2 w-full pt-1">
-              <Button
-                variant="outline"
-                className="flex-1 font-extrabold text-[10px] tracking-wider uppercase h-10 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1"
-                disabled={isPlacingOrder || cart.length === 0 || !selectedTableId}
-                onClick={handleCustomerReceiptClick}
-              >
-                <Printer className="w-3.5 h-3.5" /> Customer Receipt
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 font-extrabold text-[10px] tracking-wider uppercase h-10 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1"
-                disabled={isPlacingOrder || cart.length === 0 || !selectedTableId}
-                onClick={handlePrintKotClick}
-              >
-                <Printer className="w-3.5 h-3.5" /> Print KOT
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 font-extrabold text-[10px] tracking-wider uppercase h-10 border-slate-200 hover:bg-slate-100 flex items-center justify-center gap-1"
-                disabled={isPlacingOrder || cart.length === 0 || !activeOrderId}
-                onClick={handleOwnerCopyClick}
-              >
-                <Printer className="w-3.5 h-3.5" /> Owner Copy
-              </Button>
-            </div>
-          </div>
-        </div>
 
       </div>
 
@@ -1803,6 +2013,15 @@ export function OrderPage() {
           }
         }}
       />
-    </div>
+
+      {/* Product Configurator Modal */}
+      <ProductConfiguratorModal
+        isOpen={isConfiguratorOpen}
+        onClose={() => setIsConfiguratorOpen(false)}
+        product={configuringProduct}
+        onAddToCart={handleAddConfiguredCartItem}
+      />
+        </div>
+    </CashierLayout>
   );
 }

@@ -47,116 +47,145 @@ export function printReceipts(
     ? `<img src="${effectiveLogo}" style="max-height: 48px; max-width: 120px; object-fit: contain; margin: 0 auto 5px auto; display: block;" onError="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" /><div style="display:none; font-size:14px; font-weight:bold; padding:4px 8px; border:1px solid #000; margin:0 auto 5px auto;">${initials}</div>`
     : `<div style="display:inline-block; font-size:14px; font-weight:bold; padding:4px 8px; border:1px solid #000; margin:0 auto 5px auto;">${initials}</div>`;
 
-  // Create a temporary print frame or styling
+  // Create a temporary print frame or styling for continuous 80mm thermal receipts
   const style = `
     @media print {
-      body {
-        margin: 0;
-        padding: 0;
-        background: #fff;
-        color: #000;
-        font-family: 'Courier New', Courier, monospace;
-        font-size: 12px;
+      @page {
+        size: 80mm auto;
+        margin: 0mm !important;
       }
-      .receipt-container {
-        width: 80mm;
-        padding: 4mm;
-        margin: 0 auto;
-        box-sizing: border-box;
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 80mm !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        font-family: 'Courier New', Courier, monospace, sans-serif !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
-      .page-break {
-        page-break-after: always;
-        break-after: page;
-        border-bottom: 2px dashed #000;
-        margin-bottom: 10px;
-        padding-bottom: 10px;
+      header, footer {
+        display: none !important;
       }
-      .center { text-align: center; }
-      .bold { font-weight: bold; }
-      .right { text-align: right; }
-      .separator {
-        border-bottom: 1px dashed #000;
-        margin: 5px 0;
-      }
-      .double-separator {
-        border-bottom: 2px double #000;
-        margin: 5px 0;
-      }
-      .item-row {
-        display: flex;
-        justify-content: space-between;
-        margin: 3px 0;
-      }
-      .item-qty { width: 10%; }
-      .item-name { width: 60%; }
-      .item-price { width: 30%; text-align: right; }
     }
+
+    body {
+      font-family: 'Courier New', Courier, monospace, sans-serif;
+      font-size: 11px;
+      line-height: 1.3;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #000000;
+    }
+
+    .receipt-container {
+      width: 76mm;
+      max-width: 76mm;
+      margin: 0 auto;
+      padding: 3mm 2mm;
+      box-sizing: border-box;
+      page-break-before: avoid !important;
+      page-break-after: avoid !important;
+      page-break-inside: avoid !important;
+      break-before: avoid !important;
+      break-after: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .separator { border-top: 1px dashed #000; margin: 4px 0; }
+    .double-separator { border-top: 2.5px double #000; margin: 4px 0; }
+    .item-row { display: flex; justify-content: space-between; align-items: center; margin: 1.5px 0; }
+    .item-entry { margin-bottom: 5px; }
+    .item-name { font-size: 11.5px; font-weight: bold; word-break: break-word; }
+    .variant-detail { font-size: 9.5px; color: #222; padding-left: 8px; }
+    .note-detail { font-size: 9.5px; font-style: italic; color: #333; padding-left: 8px; }
   `;
 
-  // HTML content for print
+  // HTML content for KOT print
   const kotHtml = `
-    <div class="receipt-container page-break">
-      <div class="center bold" style="font-size: 16px;">KITCHEN ORDER TICKET (KOT)</div>
-      ${data.isReprint ? '<div class="center bold">** DUPLICATE/REPRINT COPY **</div>' : ''}
+    <div class="receipt-container">
+      <div class="center bold" style="font-size: 16px;">KITCHEN ORDER TICKET</div>
+      ${data.isReprint ? '<div class="center bold">** DUPLICATE COPY **</div>' : ''}
       <div class="separator"></div>
-      <div><strong>Order Ref:</strong> ${data.orderNumber}</div>
-      <div><strong>Table:</strong> ${data.tableNumber}</div>
-      <div><strong>Date/Time:</strong> ${data.timestamp}</div>
+      <div class="item-row"><span>Order Ref: <strong>${data.orderNumber}</strong></span><span>Table: <strong>${data.tableNumber}</strong></span></div>
+      <div class="item-row"><span>Date: ${data.timestamp}</span><span>Cashier: ${data.cashierName}</span></div>
       <div class="separator"></div>
-      <div class="bold" style="display: flex; justify-content: space-between;">
-        <span style="width: 20%;">QTY</span>
-        <span style="width: 80%;">ITEM</span>
-      </div>
+      <div class="item-row bold"><span>QTY</span><span>ITEM SPECIFICATION</span></div>
       <div class="separator"></div>
       ${data.items.map(item => `
-        <div style="display: flex; justify-content: space-between; font-size: 14px; margin: 4px 0;">
-          <span style="width: 20%; font-weight: bold;">${item.quantity} x</span>
-          <span style="width: 80%;">${item.item_name} ${item.special_notes ? `<br/><small style="font-weight: normal; font-style: italic;">* Note: ${item.special_notes}</small>` : ''}</span>
+        <div style="margin-bottom: 6px; border-bottom: 1px dotted #ccc; padding-bottom: 3px;">
+          <div class="item-row" style="align-items: flex-start;">
+            <span style="width: 18%; font-size: 13px; font-weight: bold;">${item.quantity} ×</span>
+            <span style="width: 82%; font-size: 13px; font-weight: bold; word-break: break-word;">${item.item_name}</span>
+          </div>
+          ${item.selected_variant_text ? `
+            <div class="variant-detail" style="margin-left: 18%;">
+              • ${item.selected_variant_text.split(' | ').join('<br/>• ')}
+            </div>
+          ` : ''}
+          ${item.special_notes ? `
+            <div class="note-detail" style="margin-left: 18%;">
+              * Note: ${item.special_notes}
+            </div>
+          ` : ''}
         </div>
       `).join('')}
       <div class="separator"></div>
-      <div class="center italic">For Kitchen Station Use Only</div>
+      <div class="center" style="font-size: 9px; color: #444;">-- Kitchen Station Record --</div>
     </div>
   `;
 
   const customerHtml = `
-    <div class="receipt-container page-break">
+    <div class="receipt-container">
       <div class="center">
         ${customerLogoHtml}
-        <div class="bold" style="font-size: 16px;">${effectiveName}</div>
-        ${effectiveAddress ? `<div>${effectiveAddress}</div>` : ''}
-        ${effectivePhone ? `<div>Ph: ${effectivePhone}</div>` : ''}
-        ${effectiveEmail ? `<div>Email: ${effectiveEmail}</div>` : ''}
-        ${effectiveGst ? `<div>GSTIN: ${effectiveGst}</div>` : ''}
-        ${data.isReprint ? '<div class="bold" style="margin-top: 4px; border: 1px solid #000; padding: 2px;">REPRINT COPY</div>' : ''}
+        <div class="bold" style="font-size: 17px; text-transform: uppercase;">${effectiveName}</div>
+        ${effectiveAddress ? `<div style="font-size: 10px;">${effectiveAddress}</div>` : ''}
+        ${effectivePhone ? `<div style="font-size: 10px;">Ph: ${effectivePhone}</div>` : ''}
+        ${effectiveEmail ? `<div style="font-size: 10px;">Email: ${effectiveEmail}</div>` : ''}
+        ${effectiveGst ? `<div style="font-size: 10px; font-weight: bold;">GSTIN: ${effectiveGst}</div>` : ''}
       </div>
       <div class="separator"></div>
-      <div><strong>Invoice:</strong> ${data.orderNumber}</div>
-      <div><strong>Table:</strong> ${data.tableNumber}</div>
-      <div><strong>Cashier:</strong> ${data.cashierName}</div>
-      <div><strong>Date:</strong> ${data.timestamp}</div>
-      <div class="separator"></div>
-      <div class="bold" style="display: flex;">
-        <span style="width: 10%;">QTY</span>
-        <span style="width: 60%;">ITEM</span>
-        <span style="width: 30%; text-align: right;">PRICE</span>
+      <div class="center bold" style="font-size: 12px; letter-spacing: 1px;">
+        CUSTOMER COPY
+        ${data.isReprint ? ' - REPRINT' : ''}
       </div>
+      <div class="separator"></div>
+      <div class="item-row"><span>Bill No: <strong>${data.orderNumber}</strong></span><span>Table: <strong>${data.tableNumber || 'N/A'}</strong></span></div>
+      <div class="item-row"><span>Date: ${data.timestamp}</span><span>Cashier: ${data.cashierName}</span></div>
+      <div class="separator"></div>
+      <div class="item-row bold"><span>ITEM DESCRIPTION</span><span>AMOUNT</span></div>
       <div class="separator"></div>
       ${data.items.map(item => `
-        <div style="display: flex;">
-          <span style="width: 10%;">${item.quantity}</span>
-          <span style="width: 60%;">${item.item_name}</span>
-          <span style="width: 30%; text-align: right;">${data.currencySymbol}${item.item_total.toFixed(2)}</span>
+        <div class="item-entry">
+          <div class="item-name">${item.item_name}</div>
+          <div class="item-row" style="font-size: 10.5px;">
+            <span>${item.quantity} × ${data.currencySymbol}${item.unit_price.toFixed(2)}</span>
+            <span class="bold">${data.currencySymbol}${item.item_total.toFixed(2)}</span>
+          </div>
+          ${item.selected_variant_text ? `
+            <div class="variant-detail">
+              • ${item.selected_variant_text.split(' | ').join('<br/>• ')}
+            </div>
+          ` : ''}
+          ${item.special_notes ? `
+            <div class="note-detail">
+              * Note: ${item.special_notes}
+            </div>
+          ` : ''}
         </div>
       `).join('')}
       <div class="separator"></div>
       <div class="item-row">
-        <span>Subtotal:</span>
+        <span>Subtotal</span>
         <span>${data.currencySymbol}${data.subtotal.toFixed(2)}</span>
       </div>
       ${data.discountAmount > 0 ? `
-        <div class="item-row">
-          <span>Discount:</span>
+        <div class="item-row bold">
+          <span>Discount</span>
           <span>-${data.currencySymbol}${data.discountAmount.toFixed(2)}</span>
         </div>
       ` : ''}
@@ -171,53 +200,64 @@ export function printReceipts(
         </div>
       ` : ''}
       <div class="double-separator"></div>
-      <div class="item-row bold" style="font-size: 14px;">
-        <span>GRAND TOTAL:</span>
+      <div class="item-row bold" style="font-size: 15px;">
+        <span>GRAND TOTAL</span>
         <span>${data.currencySymbol}${data.grandTotal.toFixed(2)}</span>
       </div>
       <div class="double-separator"></div>
-      <div class="center">
-        <strong>Paid via ${data.paymentMethod}</strong>
+      <div class="item-row bold">
+        <span>Paid via ${data.paymentMethod}</span>
+        <span>${data.currencySymbol}${data.grandTotal.toFixed(2)}</span>
       </div>
       <div class="separator"></div>
-      <div class="center bold" style="margin-top: 5px;">Thank You! Visit Again</div>
+      <div class="center bold" style="margin-top: 4px;">Thank You! Please Visit Again.</div>
+      <div class="center" style="font-size: 9px; color: #444; margin-top: 2px;">NexVelt POS • Enterprise Billing Systems</div>
     </div>
   `;
 
   const restaurantHtml = `
     <div class="receipt-container">
       <div class="center">
-        <div class="bold" style="font-size: 14px; border: 1px solid #000; padding: 2px; display: inline-block; margin-bottom: 5px;">INTERNAL COPY (RESTAURANT)</div>
-        <div class="bold" style="font-size: 16px;">${data.restaurantName}</div>
-        ${data.isReprint ? '<div class="bold" style="margin-top: 4px; border: 1px solid #000; padding: 2px;">REPRINT COPY</div>' : ''}
+        <div class="bold" style="font-size: 17px; text-transform: uppercase;">${effectiveName}</div>
       </div>
       <div class="separator"></div>
-      <div><strong>Invoice:</strong> ${data.orderNumber}</div>
-      <div><strong>Table:</strong> ${data.tableNumber}</div>
-      <div><strong>Cashier:</strong> ${data.cashierName}</div>
-      <div><strong>Date:</strong> ${data.timestamp}</div>
-      <div class="separator"></div>
-      <div class="bold" style="display: flex;">
-        <span style="width: 10%;">QTY</span>
-        <span style="width: 60%;">ITEM</span>
-        <span style="width: 30%; text-align: right;">PRICE</span>
+      <div class="center bold" style="font-size: 12px; letter-spacing: 1px;">
+        MERCHANT COPY
+        ${data.isReprint ? ' - REPRINT' : ''}
       </div>
+      <div class="separator"></div>
+      <div class="item-row"><span>Bill No: <strong>${data.orderNumber}</strong></span><span>Table: <strong>${data.tableNumber || 'N/A'}</strong></span></div>
+      <div class="item-row"><span>Date: ${data.timestamp}</span><span>Cashier: ${data.cashierName}</span></div>
+      <div class="separator"></div>
+      <div class="item-row bold"><span>ITEM DESCRIPTION</span><span>AMOUNT</span></div>
       <div class="separator"></div>
       ${data.items.map(item => `
-        <div style="display: flex;">
-          <span style="width: 10%;">${item.quantity}</span>
-          <span style="width: 60%;">${item.item_name}</span>
-          <span style="width: 30%; text-align: right;">${data.currencySymbol}${item.item_total.toFixed(2)}</span>
+        <div class="item-entry">
+          <div class="item-name">${item.item_name}</div>
+          <div class="item-row" style="font-size: 10.5px;">
+            <span>${item.quantity} × ${data.currencySymbol}${item.unit_price.toFixed(2)}</span>
+            <span class="bold">${data.currencySymbol}${item.item_total.toFixed(2)}</span>
+          </div>
+          ${item.selected_variant_text ? `
+            <div class="variant-detail">
+              • ${item.selected_variant_text.split(' | ').join('<br/>• ')}
+            </div>
+          ` : ''}
+          ${item.special_notes ? `
+            <div class="note-detail">
+              * Note: ${item.special_notes}
+            </div>
+          ` : ''}
         </div>
       `).join('')}
       <div class="separator"></div>
       <div class="item-row">
-        <span>Subtotal:</span>
+        <span>Subtotal</span>
         <span>${data.currencySymbol}${data.subtotal.toFixed(2)}</span>
       </div>
       ${data.discountAmount > 0 ? `
-        <div class="item-row">
-          <span>Discount:</span>
+        <div class="item-row bold">
+          <span>Discount</span>
           <span>-${data.currencySymbol}${data.discountAmount.toFixed(2)}</span>
         </div>
       ` : ''}
@@ -226,24 +266,25 @@ export function printReceipts(
         <span>${data.currencySymbol}${data.taxAmount.toFixed(2)}</span>
       </div>
       <div class="double-separator"></div>
+      <div class="item-row bold" style="font-size: 15px;">
+        <span>GRAND TOTAL</span>
+        <span>${data.currencySymbol}${data.grandTotal.toFixed(2)}</span>
+      </div>
+      <div class="double-separator"></div>
       <div class="item-row bold">
-        <span>GRAND TOTAL:</span>
+        <span>Paid via ${data.paymentMethod}</span>
         <span>${data.currencySymbol}${data.grandTotal.toFixed(2)}</span>
       </div>
       <div class="separator"></div>
-      <div class="center">
-        <strong>Paid via ${data.paymentMethod}</strong>
-      </div>
-      <div class="separator"></div>
       ${data.internalNotes ? `<div><strong>Internal Notes:</strong> ${data.internalNotes}</div><div class="separator"></div>` : ''}
-      <div class="center italic">Internal Audit Copy</div>
+      <div class="center" style="font-size: 9px; color: #444; margin-top: 2px;">Merchant Copy • Internal Record</div>
     </div>
   `;
 
   const htmlParts = [];
   const hasSpecificBillTemplate = options.customer !== undefined || options.restaurant !== undefined;
   
-  if (options.kot ?? (!hasSpecificBillTemplate)) {
+  if (options.kot) {
     htmlParts.push(kotHtml);
   }
   
@@ -252,7 +293,6 @@ export function printReceipts(
     if (options.restaurant) htmlParts.push(restaurantHtml);
   } else if (options.bill ?? true) {
     htmlParts.push(customerHtml);
-    htmlParts.push(restaurantHtml);
   }
 
   // Write content to print window

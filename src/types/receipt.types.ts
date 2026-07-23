@@ -17,6 +17,7 @@ export interface KotReceiptData {
 export interface KotItem {
   name: string;
   quantity: number;
+  selected_variant_text?: string | null;
   special_notes: string | null;
 }
 
@@ -60,6 +61,7 @@ export interface BillItem {
   quantity: number;
   unit_price: number;
   item_total: number;
+  selected_variant_text?: string | null;
   special_notes: string | null;
 }
 

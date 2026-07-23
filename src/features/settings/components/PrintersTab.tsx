@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Printer, Plus, Edit2, Trash2, Wifi, Bluetooth, Usb, Monitor, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { printerService } from '@/services/printer.service';
+import { printManager } from '@/services/printing/PrintManager';
 import { useRestaurantStore } from '@/stores/restaurant.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { Printer as PrinterType, ConnectionType, PaperSize, PrintTemplate, PrinterStatus } from '@/types/printer.types';
@@ -128,20 +129,8 @@ export function PrintersTab() {
   };
 
   const testPrint = (printer: PrinterType) => {
-    printerService.printKot({
-      restaurant_name: restaurant?.name ?? 'Test',
-      order_number: 'TEST-001',
-      token_number: 1,
-      table_number: 'T1',
-      floor_name: 'Ground',
-      date: new Date().toLocaleDateString(),
-      time: new Date().toLocaleTimeString(),
-      cashier_name: 'Admin',
-      items: [{ name: 'Test Item', quantity: 1, special_notes: null }],
-      is_reprint: false,
-      kitchen_notes: null,
-    }, printer.paper_size);
-    toast({ title: 'Test print sent', description: `Sent to ${printer.name}` });
+    printManager.printTestPage(printer.paper_size, printer.name);
+    toast({ title: 'Hardware Diagnostic Test Page Dispatched', description: `Printed alignment test page for ${printer.name}` });
   };
 
   return (

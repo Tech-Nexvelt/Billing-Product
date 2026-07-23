@@ -370,87 +370,126 @@ export class PrinterService extends BaseService {
   }
 
   buildKotHtml(data: KotReceiptData, paperSize: '58mm' | '80mm'): string {
-    const width = paperSize === '58mm' ? '52mm' : '72mm';
-    return `<!DOCTYPE html><html><head><style>
-      @media print { @page { margin: 2mm; size: ${paperSize}; } }
-      body { font-family: monospace; font-size: 10px; width: ${width}; margin: 0; padding: 4px; }
+    const width = paperSize === '58mm' ? '54mm' : '74mm';
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+      @media print {
+        @page { size: ${paperSize} auto; margin: 0; }
+        html, body { margin: 0 !important; padding: 0 !important; width: ${paperSize} !important; background: #fff !important; color: #000 !important; }
+        header, footer { display: none !important; }
+      }
+      body { font-family: 'Courier New', Courier, monospace, sans-serif; font-size: 11px; width: ${width}; margin: 0 auto; padding: 4px 2px; box-sizing: border-box; line-height: 1.3; }
       .center { text-align: center; }
       .bold { font-weight: bold; }
       .separator { border-top: 1px dashed #000; margin: 4px 0; }
-      .row { display: flex; justify-content: space-between; }
-      h2 { margin: 0; font-size: 13px; }
+      .row { display: flex; justify-content: space-between; align-items: center; margin: 2px 0; }
+      .kot-title { font-size: 16px; margin: 2px 0; }
+      .item-name { font-size: 13px; font-weight: bold; word-break: break-word; }
+      .item-qty { font-size: 13px; font-weight: bold; width: 18%; }
+      .variant-detail { font-size: 10px; color: #222; margin-left: 18%; }
+      .note-detail { font-size: 10px; font-style: italic; color: #333; margin-left: 18%; }
     </style></head><body>
-      <div class="center bold"><h2>KITCHEN ORDER</h2></div>
+      <div class="center bold kot-title">KITCHEN ORDER TICKET</div>
       ${data.is_reprint ? '<div class="center bold">** DUPLICATE COPY **</div>' : ''}
       <div class="separator"></div>
-      <div class="row"><span>Order#: ${data.order_number}</span><span>Token: ${data.token_number}</span></div>
-      <div class="row"><span>Table: ${data.table_number}</span><span>Floor: ${data.floor_name}</span></div>
+      <div class="row"><span>Order#: <strong>${data.order_number}</strong></span><span>Token: <strong>#${data.token_number}</strong></span></div>
+      <div class="row"><span>Table: <strong>${data.table_number || 'N/A'}</strong></span><span>Floor: <strong>${data.floor_name || 'Main'}</strong></span></div>
       <div class="row"><span>Date: ${data.date}</span><span>Time: ${data.time}</span></div>
       <div class="row"><span>Cashier: ${data.cashier_name}</span></div>
       <div class="separator"></div>
+      <div class="row bold"><span>QTY</span><span>ITEM SPECIFICATION</span></div>
+      <div class="separator"></div>
       ${data.items.map(i => `
-        <div class="bold">${i.quantity}x ${i.name}</div>
-        ${i.special_notes ? `<div style="font-style:italic;margin-left:8px;"> * ${i.special_notes}</div>` : ''}
+        <div style="margin-bottom: 6px; border-bottom: 1px dotted #ccc; padding-bottom: 3px;">
+          <div class="row" style="align-items: flex-start;">
+            <span class="item-qty">${i.quantity} ×</span>
+            <span class="item-name" style="width: 82%;">${i.name}</span>
+          </div>
+          ${i.selected_variant_text ? `<div class="variant-detail">• ${i.selected_variant_text.split(' | ').join('<br/>• ')}</div>` : ''}
+          ${i.special_notes ? `<div class="note-detail">* Note: ${i.special_notes}</div>` : ''}
+        </div>
       `).join('')}
       <div class="separator"></div>
-      ${data.kitchen_notes ? `<div>Notes: ${data.kitchen_notes}</div>` : ''}
-      <div class="center" style="margin-top:8px;">-- KOT END --</div>
+      ${data.kitchen_notes ? `<div><strong>Notes:</strong> ${data.kitchen_notes}</div><div class="separator"></div>` : ''}
+      <div class="center" style="font-size: 9px; color: #444;">-- Kitchen Station Record --</div>
     </body></html>`;
   }
 
   buildBillHtml(data: BillReceiptData, paperSize: '58mm' | '80mm', template: string): string {
-    const width = paperSize === '58mm' ? '52mm' : '72mm';
-    const sym = data.currency_symbol;
+    const width = paperSize === '58mm' ? '54mm' : '74mm';
+    const sym = data.currency_symbol || '₹';
     const logoUrl = data.restaurant_logo_url;
     const name = data.restaurant_name || 'NexVelt POS';
     const initials = name.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean).map(w => w[0]).join('').substring(0, 2).toUpperCase() || 'POS';
 
     const logoHtml = logoUrl
-      ? `<img src="${logoUrl}" alt="Logo" style="max-height: 44px; max-width: 100%; object-fit: contain; margin: 0 auto 4px auto; display: block;" onError="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" /><div style="display:none; font-size:12px; font-weight:bold; padding:2px 6px; border:1px solid #000; margin:0 auto 4px auto;">${initials}</div>`
-      : `<div style="display:inline-block; font-size:12px; font-weight:bold; padding:2px 6px; border:1px solid #000; margin:0 auto 4px auto;">${initials}</div>`;
+      ? `<img src="${logoUrl}" alt="Logo" style="max-height: 48px; max-width: 100%; object-fit: contain; margin: 0 auto 3px auto; display: block;" onError="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" /><div style="display:none; font-size:14px; font-weight:bold; padding:2px 6px; border:1.5px solid #000; margin:0 auto 3px auto;">${initials}</div>`
+      : `<div style="display:inline-block; font-size:14px; font-weight:bold; padding:2px 6px; border:1.5px solid #000; margin:0 auto 3px auto;">${initials}</div>`;
 
-    return `<!DOCTYPE html><html><head><style>
-      @media print { @page { margin: 2mm; size: ${paperSize}; } }
-      body { font-family: monospace; font-size: 10px; width: ${width}; margin: 0; padding: 4px; }
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+      @media print {
+        @page { size: ${paperSize} auto; margin: 0; }
+        html, body { margin: 0 !important; padding: 0 !important; width: ${paperSize} !important; background: #fff !important; color: #000 !important; }
+        header, footer { display: none !important; }
+      }
+      body { font-family: 'Courier New', Courier, monospace, sans-serif; font-size: 11px; width: ${width}; margin: 0 auto; padding: 4px 2px; box-sizing: border-box; line-height: 1.3; }
       .center { text-align: center; }
       .bold { font-weight: bold; }
       .separator { border-top: 1px dashed #000; margin: 4px 0; }
-      .row { display: flex; justify-content: space-between; }
-      h2 { margin: 0; font-size: 13px; }
-      .double { border-top: 2px double #000; margin: 4px 0; }
+      .double { border-top: 2.5px double #000; margin: 4px 0; }
+      .row { display: flex; justify-content: space-between; align-items: center; margin: 1.5px 0; }
+      .rest-title { font-size: 17px; font-weight: bold; text-transform: uppercase; margin: 2px 0; }
+      .item-entry { margin-bottom: 5px; }
+      .item-name { font-size: 11.5px; font-weight: bold; word-break: break-word; }
+      .variant-detail { font-size: 9.5px; color: #222; padding-left: 8px; }
+      .note-detail { font-size: 9.5px; font-style: italic; color: #333; padding-left: 8px; }
+      .grand-row { font-size: 15px; font-weight: bold; }
     </style></head><body>
       <div class="center">
         ${logoHtml}
-        <h2 class="bold" style="margin-top: 2px;">${name}</h2>
-        ${data.restaurant_address ? `<div>${data.restaurant_address}</div>` : ''}
-        ${data.restaurant_phone ? `<div>Ph: ${data.restaurant_phone}</div>` : ''}
-        ${data.restaurant_email ? `<div>Email: ${data.restaurant_email}</div>` : ''}
-        ${data.gst_number ? `<div>GSTIN: ${data.gst_number}</div>` : ''}
+        <div class="rest-title">${name}</div>
+        ${data.restaurant_address ? `<div style="font-size: 10px;">${data.restaurant_address}</div>` : ''}
+        ${data.restaurant_phone ? `<div style="font-size: 10px;">Ph: ${data.restaurant_phone}</div>` : ''}
+        ${data.restaurant_email ? `<div style="font-size: 10px;">Email: ${data.restaurant_email}</div>` : ''}
+        ${data.gst_number ? `<div style="font-size: 10px; font-weight: bold;">GSTIN: ${data.gst_number}</div>` : ''}
       </div>
       <div class="separator"></div>
-      ${template === 'restaurant' ? '<div class="center bold">RESTAURANT COPY</div>' : '<div class="center bold">CUSTOMER COPY</div>'}
+      <div class="center bold" style="font-size: 12px; letter-spacing: 1px;">
+        ${template === 'restaurant' ? 'MERCHANT COPY' : 'CUSTOMER COPY'}
+        ${data.is_reprint ? ' - REPRINT' : ''}
+      </div>
       <div class="separator"></div>
-      <div class="row"><span>Bill#: ${data.bill_number}</span><span>Date: ${data.date}</span></div>
-      <div class="row"><span>Table: ${data.table_number}/${data.floor_name}</span><span>Time: ${data.time}</span></div>
-      <div class="row"><span>Cashier: ${data.cashier_name}</span></div>
+      <div class="row"><span>Bill No: <strong>${data.bill_number}</strong></span><span>Table: <strong>${data.table_number || 'N/A'}</strong></span></div>
+      <div class="row"><span>Date: ${data.date}</span><span>Time: ${data.time}</span></div>
+      <div class="row"><span>Cashier: ${data.cashier_name}</span><span>Floor: ${data.floor_name || 'Main'}</span></div>
       ${data.customer_name ? `<div class="row"><span>Customer: ${data.customer_name}</span></div>` : ''}
       <div class="separator"></div>
-      <div class="row bold"><span>Item</span><span>Qty</span><span>Price</span><span>Total</span></div>
+      <div class="row bold"><span>ITEM DESCRIPTION</span><span>AMOUNT</span></div>
       <div class="separator"></div>
-      ${data.items.map(i => `<div class="row"><span>${i.name}</span><span>${i.quantity}</span><span>${sym}${i.unit_price.toFixed(2)}</span><span>${sym}${i.item_total.toFixed(2)}</span></div>`).join('')}
+      ${data.items.map(i => `
+        <div class="item-entry">
+          <div class="item-name">${i.name}</div>
+          <div class="row" style="font-size: 10.5px;">
+            <span>${i.quantity} × ${sym}${i.unit_price.toFixed(2)}</span>
+            <span class="bold">${sym}${i.item_total.toFixed(2)}</span>
+          </div>
+          ${i.selected_variant_text ? `<div class="variant-detail">• ${i.selected_variant_text.split(' | ').join('<br/>• ')}</div>` : ''}
+          ${i.special_notes ? `<div class="note-detail">* Note: ${i.special_notes}</div>` : ''}
+        </div>
+      `).join('')}
       <div class="separator"></div>
       <div class="row"><span>Subtotal</span><span>${sym}${data.subtotal.toFixed(2)}</span></div>
-      ${data.discount_amount > 0 ? `<div class="row"><span>Discount</span><span>-${sym}${data.discount_amount.toFixed(2)}</span></div>` : ''}
-      ${data.cgst_amount > 0 ? `<div class="row"><span>CGST</span><span>${sym}${data.cgst_amount.toFixed(2)}</span></div>` : ''}
-      ${data.sgst_amount > 0 ? `<div class="row"><span>SGST</span><span>${sym}${data.sgst_amount.toFixed(2)}</span></div>` : ''}
+      ${data.discount_amount > 0 ? `<div class="row bold"><span>Discount</span><span>-${sym}${data.discount_amount.toFixed(2)}</span></div>` : ''}
+      ${data.cgst_amount > 0 ? `<div class="row"><span>CGST (2.5%)</span><span>${sym}${data.cgst_amount.toFixed(2)}</span></div>` : ''}
+      ${data.sgst_amount > 0 ? `<div class="row"><span>SGST (2.5%)</span><span>${sym}${data.sgst_amount.toFixed(2)}</span></div>` : ''}
       ${data.igst_amount > 0 ? `<div class="row"><span>IGST</span><span>${sym}${data.igst_amount.toFixed(2)}</span></div>` : ''}
       <div class="double"></div>
-      <div class="row bold"><span>GRAND TOTAL</span><span>${sym}${data.grand_total.toFixed(2)}</span></div>
-      <div class="separator"></div>
-      ${data.payments.map(p => `<div class="row"><span>${p.method}</span><span>${sym}${p.amount.toFixed(2)}</span></div>`).join('')}
+      <div class="row grand-row"><span>GRAND TOTAL</span><span>${sym}${data.grand_total.toFixed(2)}</span></div>
+      <div class="double"></div>
+      ${data.payments.map(p => `<div class="row bold"><span>Paid via ${p.method}</span><span>${sym}${p.amount.toFixed(2)}</span></div>`).join('')}
       <div class="separator"></div>
       ${template === 'restaurant' && data.internal_notes ? `<div><strong>Internal Notes:</strong> ${data.internal_notes}</div><div class="separator"></div>` : ''}
-      <div class="center">${data.footer_message}</div>
+      <div class="center bold" style="margin-top: 4px;">${data.footer_message || 'Thank You! Please Visit Again.'}</div>
+      <div class="center" style="font-size: 9px; color: #444; margin-top: 2px;">NexVelt POS • Enterprise Billing Systems</div>
     </body></html>`;
   }
 }
